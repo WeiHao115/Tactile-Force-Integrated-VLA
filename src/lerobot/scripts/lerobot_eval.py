@@ -46,6 +46,8 @@ Note that in both examples, the repo/folder should contain at least `config.json
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
+# lerobot-eval --policy.path=/home/ywl/pi05_lerobot --env.type=pusht  --eval.batch_size=10  --eval.n_episodes=10 --policy.use_amp=false --policy.device=cuda
+
 import concurrent.futures as cf
 import json
 import logging
@@ -92,6 +94,7 @@ from lerobot.utils.utils import (
 )
 
 
+# π0前向传播，动作执行也是在这里实现
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -137,12 +140,16 @@ def rollout(
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
 
     # Reset the policy and environments.
-    policy.reset()
+    policy.reset()  # 清空列表中的所有动作
+    # ===========================场景观测数据，包括机器人状态和视觉图像
+    # observation: dict_keys(['agent_pos', 'pixels'])
+    # observation['agent_pos'] <class 'numpy.ndarray'> shape(4, 14)
+    # observation['pixels']['top'] <class 'numpy.ndarray'> shape(4, 480, 640, 3)
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
 
-    all_observations = []
+    all_observations = []   # 用于存储观测数据
     all_actions = []
     all_rewards = []
     all_successes = []
@@ -159,22 +166,67 @@ def rollout(
         leave=False,
     )
     check_env_attributes_and_types(env)
+
+    # 当动作没有执行完成并且小于最大设定步骤的时候
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+        # 输入的observation中只能有pixels、environment_state、agent_pos、robot_state这四个键
+        # ========输入：observation: **dict_keys(['agent_pos', 'pixels', 'robot_state'])**
+        #   observation['pixels'].keys() 
+        #        dict_keys(['top'])       torch.Size([1, 480, 640, 3])
+        #   observation['agent_pos'].shape torch.Size([1, 14])
+        #   observation['robot_state']  dict_keys(['eef', 'gripper', 'joints'])
+        #       observation['robot_state']['eef']   dict_keys(['mat', 'pos', 'quat'])
+        #           observation['robot_state']['eef']['mat']    torch.Size([1, 3, 3])
+        #           observation['robot_state']['eef']['pos']    torch.Size([1, 3])
+        #           observation['robot_state']['eef']['quat']   torch.Size([1, 4])
+        #       observation['robot_state']['gripper']
+        #           {'qpos': array([[ 0.0387292 , -0.03872914]]), 'qvel': array([[ 0.00318809, -0.00318809]])}
+        #       observation['robot_state']['joints']
+        #           dict_keys(['pos', 'vel']) torch.Size([1, 7]) torch.Size([1, 7])
+        # ========输出：observation: **dict_keys(['observation.images.top', 'observation.state', 'observation.robot_state'])**
+        #   observation['observation.images.top'].shape     torch.Size([1, 3, 480, 640])
+        #   observation['observation.state'].shape  torch.Size([1, 14])
+        #       或者observation['observation.robot_state']
+        #               dict_keys(['eef', 'gripper', 'joints'])
+        #                   observation['observation.robot_state']['eef']
+        #                       dict_keys(['mat', 'pos', 'quat']) torch.Size([1, 3, 3]) torch.Size([1, 3]) torch.Size([1, 4])
+        #                   observation['observation.robot_state']['gripper']
+        #                       {'qpos': tensor([[ 0.0387, -0.0387]], dtype=torch.float64), 'qvel': tensor([[ 0.0032, -0.0032]], dtype=torch.float64)}
+        #                   observation['observation.robot_state']['joints']
+        #                       dict_keys(['pos', 'vel']) torch.Size([1, 7]) torch.Size([1, 7])
+        # !!!!!!!!!!!! preprocess_observation中会对图像进行归一化处理
         observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
+        # 将文本指令整合进去
         observation = add_envs_task(env, observation)
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+        # 主要是将机器人状态robot_state转换为pi0的输入状态state
         observation = env_preprocessor(observation)
+        # observation: <class 'dict'>
+        #   dict_keys(['action', 'next.reward', 'next.done', 'next.truncated', 'info', 'task', 'observation.images.top', 'observation.state', 'observation.language.tokens', 'observation.language.attention_mask'])
+        #   observation['next.reward'] 0.0
+        #   observation['next.done'] False
+        #   observation['next.truncated'] False
+        #   observation['info'] {}
+        #   observation['task'] 'pick up the alphabet soup and place it in the basket'
+        #   observation['observation.images.top'] torch.Size([4, 3, 480, 640])
+        #   observation['observation.state'] torch.Size([4, 14])
 
         observation = preprocessor(observation)
+        # 经过处理后，增加了
+        #   observation['observation.language.tokens'] torch.Size([4, 200])
+        #   observation['observation.language.attention_mask'] torch.Size([4, 200])
+
+        # import pdb; pdb.set_trace()
+
         with torch.inference_mode():
-            action = policy.select_action(observation)
+            action = policy.select_action(observation)  # 生成动作[4 14]
         action = postprocessor(action)
 
         action_transition = {"action": action}
@@ -185,7 +237,16 @@ def rollout(
         action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
+        # 执行动作后的新观测数据
         # Apply the next action.
+        # observation <class 'dict'> dict_keys(['agent_pos', 'pixels'])
+        #   observation['agent_pos'] (4, 14)
+        #   observation['pixels']   dict_keys(['top'])
+        #       observation['pixels']['top'] (4, 480, 640, 3)
+        # reward array([0., 0., 0., 0.])
+        # terminated array([False, False, False, False])
+        # truncated array([False, False, False, False])
+        # info {'is_success': array([False, False, False, False]), '_is_success': array([ True,  True,  True,  True])}
         observation, reward, terminated, truncated, info = env.step(action_numpy)
         if render_callback is not None:
             render_callback(env)
@@ -230,10 +291,10 @@ def rollout(
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
-        ACTION: torch.stack(all_actions, dim=1),
-        "reward": torch.stack(all_rewards, dim=1),
-        "success": torch.stack(all_successes, dim=1),
-        "done": torch.stack(all_dones, dim=1),
+        ACTION: torch.stack(all_actions, dim=1),    # torch.Size([4, 400, 14])
+        "reward": torch.stack(all_rewards, dim=1),  # torch.Size([4, 400])
+        "success": torch.stack(all_successes, dim=1),   # torch.Size([4, 400])
+        "done": torch.stack(all_dones, dim=1),      # torch.Size([4, 400])
     }
     if return_observations:
         stacked_observations = {}
@@ -247,6 +308,7 @@ def rollout(
     return ret
 
 
+# π0前向推理
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -329,6 +391,14 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+
+        # rollout_data: 字典，包含动作ACTION、奖励reward、成功success、动作是否执行done
+        # ret = {
+        #     ACTION: torch.stack(all_actions, dim=1),    # torch.Size([4, 400, 14])
+        #     "reward": torch.stack(all_rewards, dim=1),  # torch.Size([4, 400])
+        #     "success": torch.stack(all_successes, dim=1),   # torch.Size([4, 400])
+        #     "done": torch.stack(all_dones, dim=1),      # torch.Size([4, 400])
+        # }
         rollout_data = rollout(
             env=env,
             policy=policy,
@@ -347,6 +417,7 @@ def eval_policy(
         # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
         done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
 
+        # 执行结束后的动作都不要了
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
         mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
@@ -495,6 +566,7 @@ def _compile_episode_data(
     return data_dict
 
 
+# @parser.wrap()将命令行中定义的变量转换到cfg中
 @parser.wrap()
 def eval_main(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
@@ -508,11 +580,14 @@ def eval_main(cfg: EvalPipelineConfig):
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
+    # 创建一个环境
     logging.info("Making environment.")
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
-
+    
+    # 这里会加载预训练权重, 此外会在cfg中指定输入是什么输出是什么
+    # rename_map映射，确保训练权重的键和模型的键一致
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -527,12 +602,13 @@ def eval_main(cfg: EvalPipelineConfig):
         "rename_observations_processor": {"rename_map": cfg.rename_map},
     }
 
+    # preprocessor: 把环境/数据集里读到的原始输入整理/拼接/归一化成 policy 网络输入格式
+    # postprocessor：把 policy 网络输出的动作转换成环境需要的动作格式
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
         preprocessor_overrides=preprocessor_overrides,
     )
-
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
@@ -595,7 +671,8 @@ def eval_one(
     """Evaluates one task_id of one suite using the provided vec env."""
 
     task_videos_dir = videos_dir
-
+    
+    # 执行结束后返回的一些参数，比如动作序列之类的
     task_result = eval_policy(
         env=env,
         policy=policy,
@@ -689,6 +766,7 @@ def eval_policy_all(
     """
     start_t = time.time()
 
+    # [('aloha', 0, SyncVectorEnv(num_envs=4))]
     # Flatten envs into list of (task_group, task_id, env)
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
 
@@ -722,6 +800,7 @@ def eval_policy_all(
             overall["video_paths"].extend(paths)
 
     # Choose runner (sequential vs threaded)
+    # 固定住run_one函数中的policy，preprocessor...等参数
     task_runner = partial(
         run_one,
         policy=policy,
@@ -740,6 +819,7 @@ def eval_policy_all(
         # sequential path (single accumulator path on the main thread)
         # NOTE: keeping a single-threaded accumulator avoids concurrent list appends or locks
         for task_group, task_id, env in tasks:
+            # 运行run_one函数进行前向推理
             tg, tid, metrics = task_runner(task_group, task_id, env)
             _accumulate_to(tg, metrics)
             per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})

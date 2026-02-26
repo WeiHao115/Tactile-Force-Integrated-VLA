@@ -100,6 +100,10 @@ def update_policy(
         # Use per-sample loss when RA-BC is enabled for proper weighting
         if rabc_batch_weights is not None:
             # Get per-sample losses
+
+            # # Modified by DK
+            #import pdb; pdb.set_trace()
+
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
             # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
@@ -111,6 +115,8 @@ def update_policy(
             output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
             output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
         else:
+            # # Modified by DK
+            #import pdb; pdb.set_trace()
             loss, output_dict = policy.forward(batch)
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
@@ -337,6 +343,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         shuffle = True
         sampler = None
 
+
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
@@ -354,7 +361,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         policy, optimizer, dataloader, lr_scheduler
     )
     dl_iter = cycle(dataloader)
-
+    
     policy.train()
 
     train_metrics = {
@@ -384,9 +391,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        #modifed by weihao
+        # import pdb; pdb.set_trace()
         batch = preprocessor(batch)
+        #modifed by weihaoc
+        # import pdb; pdb.set_trace()
         train_tracker.dataloading_s = time.perf_counter() - start_time
-
+            
         train_tracker, output_dict = update_policy(
             train_tracker,
             policy,

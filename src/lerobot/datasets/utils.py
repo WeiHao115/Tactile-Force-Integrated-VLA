@@ -684,10 +684,17 @@ def build_dataset_frame(
         dict: A dictionary representing a single frame of data.
     """
     frame = {}
+    # key: observation.joints
+    # ft: {
+    #     "dtype": "float32",
+    #     "shape": (JOINT_DIM,),
+    #     "names": ["j1", "j2", "j3", "j4", "j5", "j6"],
+    # }
     for key, ft in ds_features.items():
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
+            # observation.joints: numpy ["j1", "j2", "j3", "j4", "j5", "j6"的数值]
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]

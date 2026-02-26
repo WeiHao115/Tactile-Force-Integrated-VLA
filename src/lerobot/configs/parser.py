@@ -229,10 +229,10 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                     cli_args = filter_arg("config_path", cli_args)
                     cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
                 else:
+                    # 将命令行中的arg转换为实类
                     cfg = draccus.parse(config_class=argtype, config_path=config_path, args=cli_args)
             response = fn(cfg, *args, **kwargs)
             return response
 
         return cast(F, wrapper_inner)
-
     return cast(Callable[[F], F], wrapper_outer)

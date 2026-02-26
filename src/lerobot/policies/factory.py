@@ -394,7 +394,7 @@ def make_pre_post_processors(
 
     return processors
 
-
+# LeRobotDatasetMetadata类的.features定义了输入和输出数据类型
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
@@ -459,6 +459,8 @@ def make_policy(
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
+    # 这里会定义输入和输出特征的维度，并且定义输入的有什么，输出的有什么
+    # cfg.output_features  {'action': PolicyFeature(type=<FeatureType.ACTION: 'ACTION'>, shape=(7,))}
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
