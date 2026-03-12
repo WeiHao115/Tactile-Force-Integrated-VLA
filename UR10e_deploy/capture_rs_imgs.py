@@ -53,6 +53,13 @@ class CameraFeedManager:
         # dep = self.imgmsg_to_depth(dep_msg)
         return rgb, rgb, rgb, rgb
 
+    def get_tactile_frame(self):
+         tactile_image = rospy.wait_for_message("xxxxxxxxx", Image)
+         tactile_image_rgb = self.imgmsg_to_bgr(tactile_image)
+
+         return tactile_image_rgb
+
+
     # ########### Modified by Weihao
     # def get_latest_frames(self):
     #     # 1. 获取外部相机数据 

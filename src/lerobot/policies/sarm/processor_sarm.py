@@ -435,7 +435,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
             # Get image embeddings
-            embeddings = self.clip_model.get_image_features(**inputs).detach().cpu()
+            embeddings = self.clip_model.(**inputs).detach().cpu()
 
             # Handle single frame case
             if embeddings.dim() == 1:

@@ -473,6 +473,7 @@ def make_policy(
     if ds_meta is not None:
         kwargs["dataset_meta"] = ds_meta
 
+    # 加载预训练权重
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).

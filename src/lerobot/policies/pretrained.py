@@ -34,6 +34,8 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.hub import HubMixin
 
+import torch
+
 T = TypeVar("T", bound="PreTrainedPolicy")
 
 
@@ -105,6 +107,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
+        # 加载预训练权重
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
@@ -144,6 +147,32 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         # Load the model with appropriate kwargs
         missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
         log_model_loading_keys(missing_keys, unexpected_keys)
+        # Modified by DK
+        # 在训练的时候，在这里写代码，将触觉图像特征提取分支的权重，定义为RGB图像特征提取分支的权重
+        try:
+            with torch.no_grad():
+                # 获取当前已加载预训练权重的模型状态字典
+                state_dict = model.state_dict()
+                tactile_weights_update = {}
+                # 定义需要匹配的特征字符串
+                vision_proj_substring = "multi_modal_projector"
+                tactile_proj_substring = "multi_tactile_projector"
+                # 遍历字典，寻找视觉投影层权重并复制给触觉投影层
+                for key, tensor in state_dict.items():
+                    if vision_proj_substring in key:
+                        tactile_key = key.replace(vision_proj_substring, tactile_proj_substring)
+                        
+                        if tactile_key in state_dict:
+                            if tensor.shape == state_dict[tactile_key].shape:
+                                tactile_weights_update[tactile_key] = tensor.clone()
+                # 将更新后的权重加载回模型
+                if tactile_weights_update:
+                    model.load_state_dict(tactile_weights_update, strict=False)
+                    logging.info(f"成功迁移 {len(tactile_weights_update)} 个张量的权重至触觉投影层。")
+                else:
+                    logging.warning("未能匹配到对应的投影层权重，触觉分支将保持随机初始化状态。")
+        except Exception as e:
+            logging.error(f"权重复制过程发生异常: {e}")
 
         # For older versions, manually move to device if needed
         if "device" not in kwargs and map_location != "cpu":

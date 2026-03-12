@@ -101,7 +101,7 @@ def update_policy(
         if rabc_batch_weights is not None:
             # Get per-sample losses
 
-            # # Modified by DK
+            # Modified by DK
             #import pdb; pdb.set_trace()
 
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
@@ -230,12 +230,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Creating policy")
+   
+    # 在这里面加载的预训练权重
+    #import pdb; pdb.set_trace()
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
     )
-
+    #import pdb; pdb.set_trace()
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 

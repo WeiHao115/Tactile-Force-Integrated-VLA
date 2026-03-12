@@ -98,6 +98,8 @@ def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact 
     return dist.sample((bsize,))
 
 
+# pad_masks [B 2N+2M+K]个1
+# att_masks [B 2N+2M+K]个0
 def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (exact copy)
     """Copied from big_vision.
 
@@ -125,7 +127,9 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
         raise ValueError(pad_masks.ndim)
 
     cumsum = torch.cumsum(att_masks, dim=1)
+    #时间维度，只能够看到之前以及现在的
     att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
+    #空间维度，不看填充的部分
     pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
     return att_2d_masks & pad_2d_masks
 
@@ -426,11 +430,49 @@ class PaliGemmaWithExpertModel(
         if self.train_expert_only:
             self.paligemma.eval()
 
-    def embed_image(self, image: torch.Tensor):
-        return self.paligemma.model.get_image_features(image)
+    # ########################################################################
+    # def get_image_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Projects the last hidden state from the vision model into language model space.
+
+    #     Args:
+    #         pixel_values (`torch.FloatTensor]` of shape `(batch_size, channels, height, width)`)
+    #         The tensors corresponding to the input images.
+    #     Returns:
+    #         image_features (`torch.Tensor`): Image feature tensor of shape `(num_images, image_length, embed_dim)`).
+    #     """
+    #     vision_outputs = self.vision_tower(pixel_values=pixel_values).last_hidden_state
+    #     image_features = self.multi_modal_projector(vision_outputs)
+    #     return image_features
+    
+    # # Modified by DK
+    # def get_tactile_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
+    #     vision_outputs = self.vision_tower(pixel_values=pixel_values).last_hidden_state
+    #     tactile_img_feats = self.multi_tactile_projector(vision_outputs)
+    #     return tactile_img_feats
+
+
+    def embed_image(self, image):
+        vision_outputs = self.paligemma.model.vision_tower(image)
+        image_features = self.paligemma.model.multi_modal_projector(vision_outputs.last_hidden_state)
+        return image_features
+    
+    def embed_tactile(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        vision_outputs = self.paligemma.model.vision_tower(pixel_values=pixel_values).last_hidden_state
+        tactile_img_feats = self.paligemma.model.multi_tactile_projector(vision_outputs)
+        return tactile_img_feats
+
+    # #转换为tokens
+    # def embed_image(self, image: torch.Tensor):
+    #     return self.paligemma.model.get_image_features(image)
+    
+    # ##########################modified by weihao  直接调用的paligemma的视觉编码器，效果可能会有问题，后续可能需要单独定义一个小型的视觉编码器
+    # def embed_tactile(self, tactile_image: torch.Tensor):
+    #     return self.paligemma.model.get_tactile_features(tactile_image)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.language_model.embed_tokens(tokens)
+    
 
     def forward(
         self,
@@ -443,6 +485,7 @@ class PaliGemmaWithExpertModel(
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        #inputs_embeds=[prefix_embs, suffix_embs]
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -631,12 +674,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
 
+    # 返回值
+    # embs [B 2N+2M+K C] 多模态特征
+    # pad_masks [B 2N+2M+K]个1
+    # att_masks [B 2N+2M+K]个0
     def embed_prefix(
-        self, images, img_masks, tokens, masks
+        self, images, img_masks, tactile_images, tactile_masks, tokens, masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer."""
-        embs = []
+        # RGB图像token长度为N, 触觉token长度为M, 文本token长度为K
+        # [RGB图像1token (B N C), RGB图像2token (B N C), 触觉1token (B M C), 触觉2token (B N C), 文本token (B K C)]
+        embs = []  
+        # [维度为(B N)的1, 维度为(B N)的1, 维度为(B M)的1, 维度为(B N)的1, 维度为(B K)的1]
         pad_masks = []
+        # [N个0, N个0, M个0, M个0, K个0]
         att_masks = []
 
         # Process images
@@ -652,6 +703,22 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
             att_masks += [0] * num_img_embs
 
+        ###################################Modified by weihao
+        # 额外定义一个触觉图像特征提取分支 -> 模型和RGB的一样，加载PI0.5预训练权重的时候也加载相同的
+        # Process tactile_image
+        for tactile_image, tactile_mask in zip(tactile_images, tactile_masks, strict=True):
+
+            def tactile_embed_func(tactile_image):
+                return self.paligemma_with_expert.embed_tactile(tactile_image)
+
+            tactile_images_emb = self._apply_checkpoint(tactile_embed_func, tactile_image)  # [B N C], N=HW
+            bsize, num_tac_embs = tactile_images_emb.shape[:2]  # B N
+
+            embs.append(tactile_images_emb)
+            pad_masks.append(tactile_mask[:, None].expand(bsize, num_tac_embs)) # [1 1 1 1] -> [B N]
+            att_masks += [0] * num_tac_embs     # [M个触觉token个0]
+        #########################################################
+
         # Process language tokens
         def lang_embed_func(tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
@@ -665,12 +732,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         num_lang_embs = lang_emb.shape[1]
         att_masks += [0] * num_lang_embs
 
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        embs = torch.cat(embs, dim=1)   # 多模态特征拼接 -> [B 2N+2M+K C]
+        pad_masks = torch.cat(pad_masks, dim=1) # [B 2N+2M+K]个1
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)  # [2N+2M+K]个0
 
         bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))    # [B 2N+2M+K]个0
 
         return embs, pad_masks, att_masks
 
@@ -694,7 +761,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
 
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)    # 动作token [B L C]
 
         def time_mlp_func(time_emb):
             x = self.time_mlp_in(time_emb)
@@ -702,26 +769,31 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             x = self.time_mlp_out(x)
             return F.silu(x)
 
-        time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
+        time_emb = self._apply_checkpoint(time_mlp_func, time_emb)  # 时间token [B L C] L就是self.config.chunk_size, 动作序列长度
         action_time_emb = action_emb
         adarms_cond = time_emb
 
         embs.append(action_time_emb)
         bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
+        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device) # [B L]个1
+        pad_masks.append(action_time_mask)  # [B L]个1
 
+        # 这里的1决定了图像和文本token进行增强时不会用到动作token
         # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
+        att_masks += [1] + ([0] * (self.config.chunk_size - 1)) # [1个1, L-1个0]
 
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        embs = torch.cat(embs, dim=1)   # [B L C]
+        pad_masks = torch.cat(pad_masks, dim=1) # [B L]个1
+        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)  
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))    # [B L]， L中的第一列是1，其余全部是0
 
+        # 动作token [B L C]
+        # [B L]个1
+        # [B L]， L中的第一列是1，其余全部是0
+        # 时间token [B L C]
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
+    def forward(self, images, img_masks, tactile_images, tactile_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -730,10 +802,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             time = self.sample_time(actions.shape[0], actions.device)
 
         time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        x_t = time_expanded * noise + (1 - time_expanded) * actions     # 噪声动作
+        u_t = noise - actions   # 预测的流向量
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # prefix_embs [B 2N+2M+K C] 多模态特征
+        # prefix_pad_masks [B 2N+2M+K]个1
+        # prefix_att_masksasks [B 2N+2M+K]个0
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tactile_images, tactile_masks, tokens, masks)
+        # suffix_embs 动作token [B L C]
+        # suffix_pad_masks [B L]个1
+        # suffix_att_masks [B L]， L中的第一列是1，其余全部是0
+        # adarms_cond 时间token [B L C]
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         if (
@@ -742,13 +821,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         ):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
-
+        #[B 2N+2M+K+L]个1
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        #[B 2N+2M+K个0 1 L-1个0]
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
+ 
+        # 定义attention mask
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
@@ -776,11 +856,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return F.mse_loss(u_t, v_t, reduction="none")
 
+    # 推理
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
     def sample_actions(
         self,
         images,
         img_masks,
+        tactile_images, 
+        tactile_masks,
         tokens,
         masks,
         noise=None,
@@ -803,13 +886,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        # embs [B 2N+2M+K C] 多模态特征
+        # pad_masks [B 2N+2M+K]个1
+        # att_masks [B 2N+2M+K]个0
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tactile_images, tactile_masks, tokens, masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        # 整个pi0.5的推理, 最后取出动作token [B L C], L表示动作序列长度
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -855,6 +942,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
         return x_t
+
 
     def denoise_step(
         self,
@@ -1016,9 +1104,25 @@ class PI05Policy(PreTrainedPolicy):
 
             if remap_count > 0:
                 print(f"Remapped {remap_count} state dict keys")
-
+           
             # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)  #false允许触觉分支暂时以随机权重初始化
+            import pdb; pdb.set_trace()
+            #####modified byweihao
+            try:
+                v_weight = "model.paligemma_with_expert.paligemma.model.multi_modal_projector.linear.weight"
+                v_bias   = "model.paligemma_with_expert.paligemma.model.multi_modal_projector.linear.bias"
+                t_weight = "model.paligemma_with_expert.paligemma.model.multi_tactile_projector.linear.weight"
+                t_bias   = "model.paligemma_with_expert.paligemma.model.multi_tactile_projector.linear.bias"
+                
+                if v_weight in remapped_state_dict:
+                    remapped_state_dict[t_weight] = remapped_state_dict[v_weight].clone()
+                if v_bias in remapped_state_dict:
+                    remapped_state_dict[t_bias] = remapped_state_dict[v_bias].clone()
+                print("Successfully copied weights from vision projector to tactile projector.")
+            except AttributeError as e:
+                print(f"Error copying weights: object path mismatch. {e}")
+
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
@@ -1194,6 +1298,63 @@ class PI05Policy(PreTrainedPolicy):
 
         return images, img_masks
 
+
+    #############Modified by weihao####################################################################################
+    # 返回
+    # tactile_images: [第1个触觉图像(B C H W)、 第2个触觉图像(B C H W)]
+    # tactile_masks: [[1 1 1 1], [1 1 1 1]]，当B=4时
+    def _preprocess_tactile(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
+        tactile_images = []
+        tactile_masks = []
+        device = next(self.parameters()).device
+
+        present_tactile_keys = [key for key in self.config.tactile_features if key in batch]
+        missing_tactile_keys = [key for key in self.config.tactile_features if key not in batch]
+        if len(present_tactile_keys) == 0:
+            raise ValueError(
+                f"All tactile image features are missing from the batch. At least one expected. "
+                f"(batch: {batch.keys()}) (tactile_images_features: {self.config.tactile_features})"
+        )
+
+        for key in present_tactile_keys:
+            tac_img = batch[key]
+            if tac_img.device != device:
+                tac_img = tac_img.to(device)
+            if tac_img.dtype != torch.float32:
+                tac_img = tac_img.to(torch.float32)
+
+            is_channels_first = tac_img.shape[1] == 3  
+            if is_channels_first:
+                tac_img = tac_img.permute(0, 2, 3, 1)   # [B H W 3]
+
+            # 需要在configuration_pi05.py定义一下尺寸大小 tactile_image_size
+            if tac_img.shape[1:3] != self.config.tactile_image_size:
+                tac_img = resize_with_pad_torch(tac_img, *self.config.tactile_image_size)
+            # 输入的触觉图像要是一个归一化后的图像 /255 [0, 1]
+            tac_img = tac_img * 2.0 - 1.0
+
+            if is_channels_first:
+                tac_img = tac_img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+            
+            tactile_images.append(tac_img)
+            bsize = tac_img.shape[0]
+            mask = torch.ones(bsize, dtype=torch.bool, device=device)   # [1 1 1 1]
+            tactile_masks.append(mask)
+
+        # 有两个触觉传感器的话
+        # tactile_images: [第1个触觉图像(B C H W)、 第2个触觉图像(B C H W)]
+        # tactile_masks: [[1 1 1 1], [1 1 1 1]]，当B=4时
+        for _num_empty_tactile in range(len(missing_tactile_keys)):
+            img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
+            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
+            tactile_images.append(img)
+            tactile_masks.append(mask)
+
+        return tactile_images, tactile_masks
+
+    ##########################################################################################################################
+
+
     def prepare_action(self, batch):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
@@ -1227,9 +1388,14 @@ class PI05Policy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        #################Modified by weihao
+        # tactile_images: [第1个触觉图像(B C H W)、 第2个触觉图像(B C H W)]
+        # tactile_masks: [[1 1 1 1], [1 1 1 1]]，当B=4时
+        tactile_images, tactile_masks = self._preprocess_tactile(batch)
+        ###################################
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        actions = self.model.sample_actions(images, img_masks, tactile_images, tactile_masks, tokens, masks, **kwargs)
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1248,11 +1414,15 @@ class PI05Policy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        # import pdb; pdb.set_trace()
+        #################Modified by weihao
+        tactile_images, tactile_masks = self._preprocess_tactile(batch)
+        ###################################
 
         actions = self.prepare_action(batch)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        losses = self.model.forward(images, img_masks, tactile_images, tactile_masks, tokens, masks, actions)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]

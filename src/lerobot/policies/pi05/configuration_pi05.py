@@ -23,7 +23,7 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 DEFAULT_IMAGE_SIZE = 224
-
+DEFAULT_TACTILE_IMAGE_SIZE = 224
 
 @PreTrainedConfig.register_subclass("pi05")
 @dataclass
@@ -57,6 +57,14 @@ class PI05Config(PreTrainedConfig):
         DEFAULT_IMAGE_SIZE,
     )  # see openpi `preprocessing_pytorch.py`
 
+
+    ####################################################Modified by weihao
+    tactile_image_size: tuple[int, int] = (
+        DEFAULT_TACTILE_IMAGE_SIZE,
+        DEFAULT_TACTILE_IMAGE_SIZE,
+    )
+
+    #######################################################
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
@@ -65,6 +73,7 @@ class PI05Config(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
+            "TACTILE": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
@@ -137,6 +146,14 @@ class PI05Config(PreTrainedConfig):
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
             self.output_features["action"] = action_feature
+            
+        ################modified by weihao
+
+        for key, feature_type in self.input_features.items():
+            if "tactile" in key:
+                feature_type.type = FeatureType.TACTILE
+            elif "force" in key:
+                feature_type.type = FeatureType.FORCE
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

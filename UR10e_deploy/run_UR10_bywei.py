@@ -142,17 +142,23 @@ class UR10ePolicyRunner:
         获取观测数据，并严格对齐 /media/ywl/T7 Shield/lerobot_dataset_converted/pick_and_place/meta/info.json 定义的训练格式
         Target Keys: ['observation.images.cam_wrist', 'observation.state', 'task']
         """
-        print("\n[DEBUG] 1. 进入 get_observation...")
+        print("\n 1. 进入 get_observation...")
         # 1. 采集原始数据
         # --- 诊断点 1: 机械臂通信 ---
-        print("[DEBUG] 2. 正在请求机械臂位姿 (get_ee_pose)...")
+        print("2. 正在请求机械臂位姿 (get_ee_pose)...")
         quat_state = self.robot.get_ee_pose(return_quat=True) 
-        print(f"[DEBUG] >> 成功获取位姿: {quat_state}")
+        print(f"成功获取位姿: {quat_state}")
 
         # --- 诊断点 2: 相机通信 ---
-        print("[DEBUG] 3. 正在请求相机图像 (get_latest_frames)...")
+        print("3. 正在请求相机图像 (get_latest_frames)...")
         _, _, cam_high, _ = self.camera_manager.get_latest_frames()
-        print("[DEBUG] >> 成功获取图像")
+        print("成功获取图像")
+         
+        print("4. 正在请求触觉图像 (get_tactile_frame)...")
+        tactile_image_rgb = self.camera_manager.get_tactile_frame()
+        print("成功获取触觉图像")
+        
+
 
         # 2. 格式化：对齐 observation.state
         self.robot.subscribr_gripper_angle()
@@ -165,11 +171,15 @@ class UR10ePolicyRunner:
         cam_high_tensor = torch.from_numpy(cam_high).float() / 255.0
         cam_high_tensor = cam_high_tensor.permute(2, 0, 1) # [H,W,C] -> [C,H,W]
 
+        tactile_image_rgb_tensor = torch.from_numpy(tactile_image_rgb).float() / 255.0
+        tactile_image_rgb_tensor = tactile_image_rgb_tensor.permute(2,0,1)
+
         # 4. 返回符合 LeRobotDataset 标准的字典
         return {
             #########pi0.5keys值
             #"observation.images.right_wrist_0_rgb": cam_high_tensor,
             "observation.images.cam_high": cam_high_tensor,
+            "observation.images.tactile_image": tactile_image_rgb_tensor,
             "observation.state": state_tensor,
             "task": task_intru  
         }
