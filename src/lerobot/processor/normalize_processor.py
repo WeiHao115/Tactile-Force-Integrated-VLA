@@ -252,6 +252,9 @@ class _NormalizationMixin:
         """
         new_observation = dict(observation)
         for key, feature in self.features.items():
+            # Modified by DK
+            print("数据是否进行归一化", "|", key in new_observation, "|", key, "|", feature.type, "|", new_observation.keys())
+
             if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
                 continue
             if feature.type != FeatureType.ACTION and key in new_observation:
@@ -303,6 +306,7 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
+        #print("数据类型与归一化方式:", feature_type, norm_mode)
         if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
             return tensor
 
@@ -444,7 +448,6 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         new_transition = transition.copy()
-
         # Handle observation normalization.
         observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is not None:

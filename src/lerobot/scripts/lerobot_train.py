@@ -102,8 +102,6 @@ def update_policy(
             # Get per-sample losses
 
             # Modified by DK
-            #import pdb; pdb.set_trace()
-
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
             # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
@@ -238,13 +236,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         ds_meta=dataset.meta,
         rename_map=cfg.rename_map,
     )
-    #import pdb; pdb.set_trace()
+
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
+
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
@@ -283,6 +282,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+
+    # MOdified by DK
+    # 判断参数梯度
+    print("==============0===================")
+    for name, value in policy.named_parameters():
+        print(name, value.requires_grad)
 
     # Load precomputed SARM progress for RA-BC if enabled
     # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
@@ -421,7 +426,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
         if is_log_step:
-            logging.info(train_tracker)
+            # Modified by DK
+            import os
+            from pathlib import Path
+            tracker_str = str(train_tracker)
+            Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
+            with open(os.path.join(cfg.output_dir, "metrics_log.txt"), "a", encoding="utf-8") as file:
+                file.write(tracker_str + "\n")
+
+
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:

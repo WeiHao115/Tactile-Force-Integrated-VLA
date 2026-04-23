@@ -562,7 +562,6 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
             "local_files_only": local_files_only,
             "revision": revision,
         }
-
         # 1. Load configuration using simplified 3-way logic
         loaded_config, base_path = cls._load_config(model_id, config_filename, hub_download_kwargs)
 
@@ -573,7 +572,6 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         steps, validated_overrides = cls._build_steps_with_overrides(
             loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs
         )
-
         # 4. Validate that all overrides were used
         cls._validate_overrides_used(validated_overrides, loaded_config)
 
@@ -773,17 +771,13 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         for step_entry in loaded_config["steps"]:
             # 1. Get step class and key
             step_class, step_key = cls._resolve_step_class(step_entry)
-
             # 2. Instantiate step with overrides
             step_instance = cls._instantiate_step(step_entry, step_class, step_key, overrides)
-
             # 3. Load step state if available
             cls._load_step_state(step_instance, step_entry, model_id, base_path, hub_download_kwargs)
-
             # 4. Track used overrides
             if step_key in override_keys:
                 override_keys.discard(step_key)
-
             steps.append(step_instance)
 
         return steps, override_keys

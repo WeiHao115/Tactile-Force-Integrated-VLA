@@ -158,6 +158,7 @@ def make_pi05_pre_post_processors(
     ]
 
     return (
+        
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,

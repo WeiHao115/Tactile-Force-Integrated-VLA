@@ -43,7 +43,7 @@ from lerobot.datasets.transforms import (
     make_transform_from_config,
 )
 
-OUTPUT_DIR = Path("outputs/image_transforms")
+OUTPUT_DIR = Path("home/k202/trans_test")
 to_pil = ToPILImage()
 
 

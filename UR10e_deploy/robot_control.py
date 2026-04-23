@@ -9,14 +9,11 @@ import tf
 import numpy as np
 from transform_utils import convert_pose_quat2mat, convert_pose_quat2euler, \
     convert_pose_mat2quat, convert_pose_quat2euler, convert_pose_euler2quat
-from robotiq_2f_gripper_control.msg import _Robotiq2FGripper_robot_output as outputMsg
-from robotiq_2f_gripper_control.msg import _Robotiq2FGripper_robot_input as inputMsg
+
 import moveit_commander
 import geometry_msgs.msg
 import copy 
-import torch
-from ur_ikfast import ur_kinematics
-
+from std_msgs.msg import Float32, Int32
 import math
 
 
@@ -25,7 +22,6 @@ class RobotOperation():
     def __init__(self, Ttool2tcp):
         # rospy.init_node("UR10_Robot_Gripper_Publisher")
         self.trajectory_publihser = rospy.Publisher('/scaled_pos_joint_traj_controller/command', JointTrajectory, queue_size=10)
-        self.gripper_publihser = rospy.Publisher('/Robotiq2FGripperRobotOutput', outputMsg.Robotiq2FGripper_robot_output, queue_size=10)
         self.UR10_joints = [
             "shoulder_pan_joint",
             "shoulder_lift_joint",
@@ -43,7 +39,6 @@ class RobotOperation():
         rospy.sleep(1)
         self.init_gripper()
         self.get_joint_angle()      # 初始化之后就开始读取各个关节角
-        self.ur10_arm = ur_kinematics.URKinematics('ur10')
         self.init_move_class()
     
 
@@ -163,23 +158,22 @@ class RobotOperation():
         self.trajectory_publihser.publish(trajectory_msg)
 
 
-    def UR10_moveto_IKSolver(self, opt_pose_quat):
-        moveit_commander.roscpp_initialize(sys.argv)
-        arm = moveit_commander.MoveGroupCommander("manipulator")
+    # def UR10_moveto_IKSolver(self, opt_pose_quat):
+    #     moveit_commander.roscpp_initialize(sys.argv)
+    #     arm = moveit_commander.MoveGroupCommander("manipulator")
 
-        basetobaselink = np.array([[-1, 0, 0, 0],
-                                   [0, -1, 0, 0],
-                                   [0, 0, 1, 0],
-                                   [0, 0, 0, 1]])
-        base_link_opt_pose_homo = np.matmul(basetobaselink, convert_pose_quat2mat(np.array(opt_pose_quat)))
-        self.get_joint_angle()
-        reset_joint_pos = self.joint_angle
-        # IK Solver求解结果
-        ik_solver_res = self.ur10_arm.inverse(convert_pose_mat2quat(base_link_opt_pose_homo), 
-                                        False,
-                                        q_guess = reset_joint_pos)
-        import pdb; pdb.set_trace()
-        self.UR10_moveto_angle(ik_solver_res)
+    #     basetobaselink = np.array([[-1, 0, 0, 0],
+    #                                [0, -1, 0, 0],
+    #                                [0, 0, 1, 0],
+    #                                [0, 0, 0, 1]])
+    #     base_link_opt_pose_homo = np.matmul(basetobaselink, convert_pose_quat2mat(np.array(opt_pose_quat)))
+    #     self.get_joint_angle()
+    #     reset_joint_pos = self.joint_angle
+    #     # IK Solver求解结果
+    #     ik_solver_res = self.ur10_arm.inverse(convert_pose_mat2quat(base_link_opt_pose_homo), 
+    #                                     False,
+    #                                     q_guess = reset_joint_pos)
+    #     self.UR10_moveto_angle(ik_solver_res)
 
     
 
@@ -190,7 +184,7 @@ class RobotOperation():
     def reset_joint_pos(self, duration_sec=5.0):
         """
         将机械臂移动到一个预定义的、安全的 "Home" 位置。
-        使用 UR10_moveto_angle 方法执行。
+        使用 UR10_movetset_traceo_angle 方法执行。
         """
         rospy.loginfo("正在执行复位: 移动到 'Home' 姿态...")
 
@@ -202,7 +196,7 @@ class RobotOperation():
             math.pi / 2.0,            # elbow_joint
             -math.pi / 2.0,            # wrist_1_joint
             -math.pi / 2.0,            # wrist_2_joint
-            0.0                       # wrist_3_joint
+            0.0                     # wrist_3_joint
         ]
 
         # --- 复用您的 UR10_moveto_angle 函数逻辑 ---
@@ -269,144 +263,69 @@ class RobotOperation():
         sub = rospy.Subscriber('/joint_states', JointState, self.get_joint_angle_callback)
         rospy.sleep(1)
     
-
-    def open_gripper(self):
-        print("Opening the gripper")
-        rospy.sleep(0.1) 
-        gripper_value = outputMsg.Robotiq2FGripper_robot_output()
-        gripper_value.rACT = 1
-        gripper_value.rGTO = 1
-        gripper_value.rATR = 0
-        gripper_value.rPR = 0   # 爪子打开的角度, 0表示打开
-        gripper_value.rSP = 255
-        gripper_value.rFR = 150
-        self.gripper_publihser.publish(gripper_value)
-        rospy.sleep(0.1)
+    def init_gripper(self):
+        
+        self.MAX_REGISTER = 1000.0
+        self.MAX_STROKE_MM = 200.0
+        self.current_pos_register = -1
+        self.opening_mm = self.MAX_STROKE_MM
+        self.opening_pct = 0.0
+        self.close_num = 0.0
         self.gripper_state = 0.0
 
+        #rospy.init_node('dh_gripper_python_client', anonymous=True)
+        self.pub_force = rospy.Publisher('/gripper/close_with_force', Float32, queue_size=10)
+        self.pub_pos_mm = rospy.Publisher('/gripper/set_pos_mm', Float32, queue_size=10)
+        self.sub_status = rospy.Subscriber('/gripper/curr_pos', Int32, self.subscribr_gripper_angle)
 
-    def close_gripper(self):
-        print("Closing the gripper")
-        rospy.sleep(0.1)
-        gripper_value = outputMsg.Robotiq2FGripper_robot_output()
-        gripper_value.rACT = 1
-        gripper_value.rGTO = 1
-        gripper_value.rATR = 0
-        gripper_value.rPR = 255 # 爪子打开的角度, 255表示闭合
-        gripper_value.rSP = 255
-        gripper_value.rFR = 150
-        self.gripper_publihser.publish(gripper_value)
-        rospy.sleep(0.1)
-        self.gripper_state = 1.0
+        rospy.sleep(1.0)
+        rospy.loginfo("DH Gripper Client Initialized.")
+
+    def subscribr_gripper_angle(self, msg):
+        #大寰的底层物理逻辑是0 mm 代表完全闭合，80 mm 代表完全张开，但是我们的定义是0 代表完全张开，80 代表完全闭合80mm，所以要进行转换
+        current_register = float(msg.data)
+        self.current_pos_register = current_register
 
 
-    def get_gripper_open_action(self):
-        return 0.0
-    
+        self.opening_mm = (current_register / self.MAX_REGISTER) * self.MAX_STROKE_MM
+        self.opening_pct = 100.0 - ((current_register / self.MAX_REGISTER) * 100.0)
+        self.close_num = self.opening_pct
+        
+    def close_with_force(self, target_force_n):
+        rospy.loginfo("Close with force %.1f N", target_force_n)
+        msg = Float32()
+        msg.data = float(target_force_n)
+        self.pub_force.publish(msg)
 
-    def get_gripper_close_action(self):
-        return 1.0
+    def close_with_pos(self, target_pos_mm):
+        rospy.loginfo("Close with position %.1f mm", target_pos_mm)
+        msg = Float32()
+        msg.data = float(target_pos_mm)
+        self.pub_pos_mm.publish(msg)
 
-    def get_gripper_null_action(self):
-        return self.gripper_state
-
-    # 初始化robotiq机械爪
-    def init_gripper(self):
-        gripper_value = outputMsg.Robotiq2FGripper_robot_output()
-        gripper_value.rACT = 0
-        self.gripper_publihser.publish(gripper_value)
-
-
-    def control_open_gripper(self):
-        print("Opening the gripper")
-        rospy.sleep(1)
-        gripper_value = outputMsg.Robotiq2FGripper_robot_output()
-        gripper_value.rACT = 1
-        gripper_value.rGTO = 1
-        gripper_value.rSP  = 255
-        gripper_value.rFR  = 150
-        self.gripper_publihser.publish(gripper_value)
-        rospy.sleep(1)
-
-
-    def control_close_gripper(self):
-        print("Closing the gripper")
-        rospy.sleep(1)
-        gripper_value = outputMsg.Robotiq2FGripper_robot_output()
-        gripper_value.rACT = 1
-        gripper_value.rGTO = 1
-        gripper_value.rATR = 0
-        gripper_value.rPR = 255 # 爪子打开的角度, 255表示闭合
-        gripper_value.rSP = 255
-        gripper_value.rFR = 150
-        self.gripper_publihser.publish(gripper_value)
-        rospy.sleep(1)
-
-
-    # TODO, 如何提取手抓和抓取物体的点云
-    # (5000, 3)，碰撞点(手抓以及抓取物体的点云)坐标 Get the points of the gripper and any object in hand.
-    # 手抓坐标系中的坐标
-    def get_collision_points(self):
-        return np.array([[0.0, 0.0, 0.0]])
-
-    # TODO, 如何生成体素
-    def get_sdf_voxels(self, sdf_voxel_size):
-        return None
-
-
-    # TODO: asscociate keypoints with closest object (mask?)
-    # 根据关键点获得关键点所属的物体
-    def get_object_by_keypoint(self, index):
-        return None
-
-    # TODO: How to judge which keypoints are grasped?
-    def is_grasping(self, candidate_obj=None):
-        """Check if gripper is grasping"""
-        # Could be enhanced with force sensor readings
-        # TODO, how to modify this
-        print("Yes it is grasping")
-        return self.gripper_state == 1.0
-
-        # 获取夹爪开合角度的callback函数
-    def subscribe_gripper_angle_callback(self, msg: inputMsg):
-        MAX_COUNT = 255.0
-        OPENING_PER_COUNT_MM = 0.4  # 2F-85: 0.4mm/count
-        gpo = float(msg.gPO)  # 0(open) .. 255(closed)
-        self.opening_mm = (MAX_COUNT - gpo) * OPENING_PER_COUNT_MM   # 距离
-        self.opening_pct = (MAX_COUNT - gpo) / MAX_COUNT * 100.0     # 角度
-        self.close_num = gpo
-
-    def subscribr_gripper_angle(self):
-        rospy.Subscriber("/Robotiq2FGripperRobotInput", inputMsg.Robotiq2FGripper_robot_input, 
-                         self.subscribe_gripper_angle_callback, queue_size=10)
-        rospy.sleep(0.2)
-
-    # 爪子闭合一定的角度
     def close_gripper_num(self, clouse_num):
-        rospy.sleep(0.2)
-        gripper_value = outputMsg.Robotiq2FGripper_robot_output()
-        gripper_value.rACT = 1
-        gripper_value.rGTO = 1
-        gripper_value.rATR = 0
-        gripper_value.rPR = int(clouse_num) # 爪子闭合程度, 255表示闭合
-        gripper_value.rSP = 255
-        gripper_value.rFR = 150
-        self.gripper_publihser.publish(gripper_value)
-        rospy.sleep(0.2)
-        self.gripper_state = 1.0
+        clouse_num = max(0.0, min(float(clouse_num), 100.0))
+        if self.gripper_state == 0.0 and clouse_num > 15:
+            clouse_num = 100.0
+            self.gripper_state = 1.0
+        elif self.gripper_state == 0.0 and clouse_num < 95:
+            clouse_num = 0.0
+            self.gripper_state = 0.0
+        elif self.gripper_state == 1.0 and clouse_num < 20:
+            clouse_num = 0.0
+            self.gripper_state = 0.0
+        else:
+            clouse_num = 100.0
+            self.gripper_state = 1.0
 
 
-    # def load_waypoints_from_txt(self,file_path):
-    #     try:
-    #         raw_data = np.loadtxt(file_path, dtype=float)
-    #         poses_data = raw_data[:, :]
-    #         if poses_data.shape[1] != 7:
-    #             print(f"[警告] 数据维度不对! 期望 7 列数据, 实际读取到 {poses_data.shape[1]} 列")
-    #             return []
-    #         return poses_data.tolist()
-    #     except Exception as e:
-    #         print(f"[错误] 读取文件失败: {e}")
-    #         return []
+        target_mm = self.MAX_STROKE_MM * (1.0 - (clouse_num / 100.0))
+        msg = Float32()
+        msg.data = target_mm
+        self.pub_pos_mm.publish(msg)
+        
+        rospy.sleep(0.01)
+
 
 
 if __name__ == "__main__":
@@ -418,53 +337,21 @@ if __name__ == "__main__":
     Ttool2tcp = convert_pose_quat2mat(Ttool2tcp)
     
     robotoperation = RobotOperation(Ttool2tcp)
-    pose = robotoperation.get_ee_pose(return_quat = True)
-    print(pose)# reset_reg_cost         : 1.30896
-
-    robotoperation.open_gripper()
-    #robotoperation.close_gripper_num(0)
-    #robotoperation.close_gripper_num(229)
-    robotoperation.close_gripper()
-   
-    # robot_move = RobotOperation(Ttool2tcp)
-    # robot_move.get_joint_angle()
-    # print("joint angle:", robot_move.joint_angle)
-
-    # ee_pose = robot_move.get_ee_pose(return_quat = True)
-    # print("End Eff Pose:", ee_pose)
-    # # exit()
-
-    # init_sol = robot_move.get_ee_pose(return_quat = True)
-    
-    # init_sol = convert_pose_quat2euler(init_sol)
-    # print(f"优化初值:{init_sol}")
-    ###################初始位姿
-    # robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
-
-    # robotoperation.UR10_moveto_pose([[-0.38784, 1.10571, 0.155, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
-    # 0.3878443289161494 1.1057178609571824 0.0562189455362975 0.0005169622706755389 0.0018612333046035615 0.03303484005805276 0.9994523339824344
-    # 0.010583956188920354 1.1948588423261886 0.5693286405499571 -0.24228574951164117 -0.0046518278200046795 0.618717115664556 0.7473052300534553
-
-    # DKDKDKDKDKDKDKDK
-    # all_pose = np.loadtxt("/home/ywl/test_arr_tcp_abs.txt")[::10]
-    # for i in range(all_pose.shape[0]):
-    #     robotoperation.UR10_moveto_pose([all_pose[i]])
-    # robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
-
-
-    # all_pose = np.loadtxt("/home/ywl/test_arr_tcp_abs.txt")
-    # robotoperation.UR10_moveto_pose([list(all_pose[i]) for i in range(all_pose.shape[0])])
-
-    robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
-
-    # robotoperation.UR10_moveto_pose([[0.4164185223500147,0.9225218656363163 ,0.16892100383971034 ,0.2556119373946606, 0.02008919164768721, 0.17438631902847515 ,0.9507094054315385]])
-    # robotoperation.UR10_moveto_pose([[0.41641704263647306 ,0.9225078178266881 ,0.16892395072567853, 0.25559897861529257, 0.020103519209294346 ,0.1743831009763194, 0.9507131769046350]])
-    # robotoperation.UR10_moveto_pose([[0.4164056275116815, 0.9223152954045618, 0.16889177531676525, 0.25566456114002484, 0.020068984418372654 ,0.174345697769888, 0.950703132271386]])
-    # robotoperation.UR10_moveto_pose([[0.4261588168587595, 0.858629618780049 ,0.28407404992566365, 0.27536550958045225, 0.030122431313555357 ,0.10480240849004223 ,0.9551350325686647]])
-    # robotoperation.UR10_moveto_pose([[0.4296073008943968, 0.8558510323506989 ,0.4649540877949935, 0.24707785638271693 ,0.003535023695799816 ,0.05535622196628423, 0.9674067010220733]])
-    # robotoperation.UR10_moveto_pose([[0.471669775079788, 0.8634773692973863 ,0.6307909312900398 ,0.1784911133960218 ,-0.035334020008058596 ,-0.0013189905696931999 ,0.9833060000491178]])
-    # robotoperation.UR10_moveto_pose([[0.10820728248278966, 1.0221518527674616 ,0.6770045011381005, -0.23271406234606176 ,0.0026586631833536547 ,0.4910404059768488 ,0.8394738926223747]])
-    # robotoperation.UR10_moveto_pose([[-0.013143427730650786, 1.1353800865050607, 0.2908637865038792 ,-0.30946329927261756 ,-0.14151736132493462 ,0.24029855180230503, 0.9090995043715783]])
-    # robotoperation.UR10_moveto_pose([[0.10174775419753514 ,1.0755037290199299, 0.6471738274224285 ,-0.23618077592226983 ,0.0887110834746816 ,0.46710271079830507, 0.8474455984417983]])
-    # robotoperation.UR10_moveto_pose([[0.35234139004689013 ,0.8778721676415399, 0.25304975822137216 ,0.015288511255998442 ,-0.10547993230518507 ,0.17648409459804176 ,0.9785160242215649]])
-    # robotoperation.UR10_moveto_pose([[0.3904330366915849 ,0.9652781041800368, 0.19531659649489483 ,-0.007276159546751315 ,0.003069760118735699 ,0.08711347102951518 ,0.996167093032215]])
+    #
+    # pose = robotoperation.get_ee_pose(return_quat = True)
+    #print(pose)# reset_reg_cost         : 1.30896
+    # exit()
+    # rospy.sleep(5)
+    # print("夹爪闭合50%")
+    # robotoperation.close_gripper_num(50)
+    # print("夹爪闭合100%")
+    robotoperation.close_gripper_num(100)
+    print("夹爪打开")
+    robotoperation.close_gripper_num(0)   
+    # ！！！！！！！！！！！！！BEST POSE
+    #robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
+  
+    #UMI起始位姿
+    robotoperation.UR10_moveto_pose([[-0.4469,  0.7455,  0.1223,  0.9197,  0.0189,  0.0247, -0.3913]])
+    #robotoperation.UR10_moveto_pose([[-0.5086,  0.4094,  0.4879,  0.0859,  0.3307,  0.9380,  0.0578]])
+    #robotoperation.UR10_moveto_pose([[  -0.4659,  0.7025,  0.0628,  0.9274, -0.0289, -0.0249, -0.3721]])
