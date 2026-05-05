@@ -426,6 +426,22 @@ def make_policy(
         ValueError: If both or neither of `ds_meta` and `env_cfg` are provided.
         NotImplementedError: If attempting to use an unsupported policy-backend
                              combination (e.g., VQBeT with 'mps').
+        实例化一个策略模型。
+
+        此工厂函数负责处理创建策略的逻辑，包括确定输入和输出特征的形状。这些形状可以从`LeRobotDatasetMetadata`对象或`EnvConfig`对象推导而来。函数可以选择从头初始化新策略，或加载预训练模型。
+
+        参数:
+            cfg: 待创建策略的配置。如果设置了`cfg.pretrained_path`，将从此路径加载模型权重。
+            ds_meta: 用于推断特征形状和类型的数据集元数据，同时为归一化层提供统计信息。
+            env_cfg: 用于推断特征形状和类型的环境配置。必须提供`ds_meta`或`env_cfg`中的一个。
+            rename_map: 可选的数据集或环境特征键到策略期望特征名称的映射（例如`"left"`→`"camera1"`）。
+
+        返回:
+            已实例化并分配到设备上的策略模型。
+
+        抛出:
+            ValueError: 如果同时提供或均未提供`ds_meta`和`env_cfg`。
+            NotImplementedError: 如果尝试使用不支持的策略-后端组合（例如VQBeT与'mps'后端）。
     """
     if bool(ds_meta) == bool(env_cfg):
         raise ValueError("Either one of a dataset metadata or a sim env must be provided.")

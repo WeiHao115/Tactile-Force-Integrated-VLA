@@ -44,7 +44,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-
+#将状态写入prompt
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
 @dataclass
 class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):

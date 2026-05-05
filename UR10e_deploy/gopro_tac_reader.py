@@ -134,9 +134,26 @@ class GoproManager:
             ret, self._buffer_frame = self.cap.retrieve()
             
             if ret and self._buffer_frame is not None:
+                # Modified by DK
+                # ---------------- 新增：安全遮罩逻辑 ----------------
+                h, w, _ = self._buffer_frame.shape
+                
+                # 设定预期的遮罩高度和宽度
+                # 使用 min() 防止设定的像素值超过实际图像尺寸引发越界崩溃
+                mask_h = min(60, h)
+                mask_w = min(120, w)
+                mask_color = (0, 0, 0)
+                
+                # 绘制左上角遮罩
+                self._buffer_frame[0:mask_h, 0:mask_w] = mask_color
+                # 绘制右上角遮罩
+                self._buffer_frame[0:mask_h, w-mask_w:w] = mask_color
+                # ----------------------------------------------------
+
                 with self.lock:
                     self.current_frame = self._buffer_frame.copy()
                     self.kernel_timestamp = timestamp_sec
+
 
     def get_latest_frame(self):
         with self.lock:
@@ -144,6 +161,9 @@ class GoproManager:
                 # 传入 NumPy 数组，返回处理后的 NumPy 数组
                 processed_frame = process_and_resize_frame(self.current_frame, (224, 224))
                 return processed_frame, self.kernel_timestamp
+
+                # # Modified by DK
+                # return self.current_frame.copy(), self.kernel_timestamp
         return None, 0.0
 
 
@@ -194,7 +214,10 @@ class RealsenseRosManager:
     def get_latest_frame(self):
         with self.lock:
             if self.current_frame is not None:
-                return self.current_frame.copy(), self.timestamp
+                processed_frame = process_and_resize_frame(self.current_frame, (640, 480))
+                return processed_frame, self.timestamp
+            
+                # return self.current_frame.copy(), self.timestamp
         return None, 0.0
 
     def release(self):
@@ -212,7 +235,7 @@ def main():
     
     # 启用 GoproManager 以避免主线程被 read() 阻塞
     try:
-        gopro_manager = GoproManager(device_id=10, width=1280, height=720, fps=30)
+        gopro_manager = GoproManager(device_id=6, width=224, height=224, fps=30)
     except RuntimeError as e:
         print(f"警告: {e}")
         gopro_manager = None
@@ -279,3 +302,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

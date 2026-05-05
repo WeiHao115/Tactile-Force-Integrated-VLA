@@ -159,37 +159,23 @@ class UR10ePolicyRunner:
     
 
     def get_observation(self, task_intru):
-        # print("\n 1. 进入 get_observation...")
-        # 1. 采集原始数据
-        # --- 诊断点 1: 机械臂通信 ---
-        # print("2. 正在请求机械臂位姿 ...")
-        quat_state = self.robot.get_ee_pose_moveit(return_quat=True) 
-        # import pdb; pdb.set_trace()
-        # Modified by DK
-        # print(f"成功获取位姿: {quat_state}")
-        # --- 诊断点 2: 相机通信 ---
-        # print("3. 正在请求相机图像 ...")
+        quat_state = self.robot.get_ee_pose(return_quat=True) 
         gopro_image, _ = self.gopro_manager.get_latest_frame()
-        # import pdb;pdb.set_trace()
-        # plt.imsave("/home/k202/lerobot/src/lerobot/scripts/test_gopro_wtq.jpg", gopro_image)
-        print("################################")
         realsense_image , _ =self.realsense.get_latest_frame()
 
-        if gopro_image is not None :
-            cv2.imshow("GoPro Camera", gopro_image)
-            cv2.waitKey(100)
-        if gopro_image is not None :
-            cv2.imshow("Realsense Camera", realsense_image)
-            cv2.waitKey(100)
+        # if gopro_image is not None :
+        #     cv2.imshow("GoPro Camera", gopro_image)
+        #     cv2.waitKey(50)
+        # if gopro_image is not None :
+        #     cv2.imshow("Realsense Camera", realsense_image)
+        #     cv2.waitKey(50)
 
         # print("4. 正在请求触觉图像 ...")
         # tactile_image_1, tactile_image_2, _= self.tactile_manager.get_tactile_frame()
         # print("成功获取触觉图像")
     
-        # 2. 格式化：对齐 observation.state
         gripper_state = self.robot.close_num 
         gripper_state = 1 if gripper_state / 100 > 0.25 else 0
-        # 拼接成 8 维向量
         state_np = np.append(quat_state, gripper_state)
         state_tensor = torch.from_numpy(state_np).float()
 
@@ -220,26 +206,24 @@ class UR10ePolicyRunner:
         
     def run(self, task_intru):
         print(f"Starting policy execution loop for task: {task_intru}")
-        
         step = 0
-        gripper_all = []
         self.policy.config.n_action_steps = 1
         while step < self.max_steps:
             if len(self.policy._action_queue) == 0:
-                # 1. 获取观测 and 预处理
                 raw_obs = self.get_observation(task_intru)
                 print(f'raw_obs.keys:{raw_obs.keys()}')
-                # import pdb; pdb.set_trace()
                 # tensor([[-0.4701,  0.7279,  0.1794, -0.9925, -0.0394,  0.0687,  0.0934,  0.0000]])
                 batch = self.preprocessor(raw_obs)
-                # import pdb; pdb.set_trace()
                 for key in batch:
                     if isinstance(batch[key], torch.Tensor):
                         batch[key] = batch[key].to(self.device, non_blocking=True)
 
-            action_num = 1
+            action_num = 10
             action_pose_list = []
+            gripper_all = []
             # 2. 模型推理 
+            # self.robot.close_gripper_num(100)
+            # rospy.sleep(5)
             with torch.inference_mode():
                 # 获取原始动作
                 while len(action_pose_list) < action_num:
@@ -253,53 +237,31 @@ class UR10ePolicyRunner:
                     action = self.postprocessor(action)
                     action_pose_list.append(action) # [[1 8]shape, [1 8]shape, ...]
                     gripper_all.append(action[0, -1])
-                
-                start_pose = np.eye(4)  # [4 4]
-                start_gripper = 0
+
+                gripper_all_mask_index = np.where(np.array(gripper_all) < 0.1)
+                if (np.array(gripper_all) < 10).sum() / action_num <= 0.1:
+                    for sing_index in gripper_all_mask_index:
+                        gripper_all[sing_index] = 0.9
 
                 for i in range(action_num):
                     current_all = action_pose_list[i]
                     current_pose_quat = current_all[:, :7]   # [1 7]
-                    current_gripper = current_all[:, [-1]]  # [1 1]
+                    current_gripper = current_all[:, -1]  # [1]
+    
                     current_pose_mat = convert_pose_quat2mat(current_pose_quat.cpu().numpy())[0]   # [4 4]
-                    start_pose = np.matmul(start_pose, current_pose_mat)    # [4 4]
-                    start_gripper = current_gripper.cpu().numpy()[0, 0]
+                    curr_pose = self.robot.get_ee_pose_moveit(return_quat=False)   # [4 4] 
+                    action_mat_pose = np.matmul(curr_pose, current_pose_mat)
+                    action_quat_pose = convert_pose_mat2quat(action_mat_pose)
 
-                start_pose = torch.from_numpy(convert_pose_mat2quat(start_pose[None])).cuda()
-                start_gripper = torch.from_numpy(start_gripper[None, None]).cuda()
-                action = torch.cat((start_pose, start_gripper), dim=1)
+                    current_gripper = current_gripper.item()
 
-
-            print("预测位姿", action)
-            # 3. 动作解析
-            action_numpy = action.cpu().numpy()
-            pose_quat_numpy = action_numpy[:, :7]
-            pose_mat_numpy = convert_pose_quat2mat(pose_quat_numpy)[0]    # [4 4]
-
-            #self.robot.subscribr_gripper_angle()
-            #gripper_val = self.robot.close_num
-
-            raw_gripper_val = float(action_numpy[:, -1])
-            print(raw_gripper_val)
-            target_gripper_val = raw_gripper_val * 100.0
-            gripper_val = max(0.0, min(100.0, target_gripper_val))
-
-            curr_pose = self.robot.get_ee_pose_moveit(return_quat=False)   # [4 4] 
-            action_mat_pose = np.matmul(curr_pose, pose_mat_numpy)
-
-            # print("=================================")
-            # print("转换前前前位姿")
-            # print(curr_pose)
-            # print("转换后后后位姿")
-            # print(action_mat_pose)
-            # print("=================================")
-            # rospy.sleep(20)
-
-            action_quat_pose = convert_pose_mat2quat(action_mat_pose)
-            print(f"目标夹爪闭合百分比: {gripper_val:.2f}")
-
-            self.robot.close_gripper_num(gripper_val)
-            self.robot.UR10_moveto_pose(list(action_quat_pose[None]))
+                    target_gripper_val = current_gripper * 100.0
+                    gripper_val = max(0.0, min(100.0, target_gripper_val))
+                    print(f"目标夹爪闭合百分比: {gripper_val}")
+                    # self.robot.close_gripper_num(gripper_val)
+                    print("预测运动位姿:", current_pose_quat)
+                    print("===============================================")
+                    self.robot.UR10_moveto_pose(list(action_quat_pose[None]))
 
             step += 1
 

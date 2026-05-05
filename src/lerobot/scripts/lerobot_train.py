@@ -102,6 +102,7 @@ def update_policy(
             # Get per-sample losses
 
             # Modified by DK
+            # import pdb; pdb.set_trace()
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
             # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
@@ -113,8 +114,38 @@ def update_policy(
             output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
             output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
         else:
-            # # Modified by DK
-            #import pdb; pdb.set_trace()
+            # Modified by DK
+            # import pdb; pdb.set_trace()
+            # import cv2
+            # import numpy as np
+            # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/train_gopro.jpg", (batch['observation.images.gopro'][0] * 255).permute(1,2,0).cpu().numpy().astype(np.int32))
+            # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/train_realsense.jpg", (batch['observation.images.realsense'][0] * 255).permute(1,2,0).cpu().numpy().astype(np.int32))
+            # 夹爪状态是-1 1
+            # batch['observation.state'] tensor([[ 0.8557,  0.7166, -1.0145,  1.0654, -0.0619, -0.2693, -1.1238, -1.0000]], device='cuda:0')
+            # batch['observation.language.tokens'] tensor([[     2,   7071, 235292,  35816,    573,  18330,   1280,    573,   2384,
+            #   21104, 235269,   3040, 235292, 235248, 235284, 235276, 235324, 235248,
+            #  235274, 235284, 235324, 235248, 235274, 235308, 235276, 235248, 235274,
+            #  235321, 235321, 235248, 235274, 235308, 235308, 235248, 235274, 235315,
+            #  235318, 235248, 235318, 235284, 235248, 235284, 235308, 235308, 235248,
+            #  235274, 235284, 235321, 235248, 235274, 235284, 235321, 235248, 235274,
+            #  235284, 235321, 235248, 235274, 235284, 235321, 235248, 235274, 235284,
+            #  235321, 235248, 235274, 235284, 235321, 235248, 235274, 235284, 235321,
+            #  235248, 235274, 235284, 235321, 235248, 235274, 235284, 235321, 235248,
+            #  235274, 235284, 235321, 235248, 235274, 235284, 235321, 235248, 235274,
+            #  235284, 235321, 235248, 235274, 235284, 235321, 235248, 235274, 235284,
+            #  235321, 235248, 235274, 235284, 235321, 235248, 235274, 235284, 235321,
+            #  235248, 235274, 235284, 235321, 235248, 235274, 235284, 235321, 235248,
+            #  235274, 235284, 235321, 235248, 235274, 235284, 235321, 235248, 235274,
+            #  235284, 235321, 235248, 235274, 235284, 235321, 235248, 235274, 235284,
+            #  235321, 235248, 235274, 235284, 235321, 235289,    108,   4022, 235292,
+            #  235248,      0,      0,      0,      0,      0,      0,      0,      0,
+            #       0,      0,      0,      0,      0,      0,      0,      0,      0,
+            #       0,      0,      0,      0,      0,      0,      0,      0,      0,
+            #       0,      0,      0,      0,      0,      0,      0,      0,      0,
+            #       0,      0,      0,      0,      0,      0,      0,      0,      0,
+            #       0,      0,      0,      0,      0,      0,      0,      0,      0,
+            #       0,      0]], device='cuda:0')
+
             loss, output_dict = policy.forward(batch)
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
@@ -216,7 +247,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Now all other processes can safely load the dataset
     if not is_main_process:
         dataset = make_dataset(cfg)
-
+    # import pdb;pdb.set_trace()
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -285,9 +316,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # MOdified by DK
     # 判断参数梯度
-    print("==============0===================")
     for name, value in policy.named_parameters():
-        print(name, value.requires_grad)
+        if value.requires_grad:
+            print("==============具有梯度的参数为===================")
+            print(name)
 
     # Load precomputed SARM progress for RA-BC if enabled
     # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
@@ -362,7 +394,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         drop_last=False,
         prefetch_factor=2 if cfg.num_workers > 0 else None,
     )
-
+    # import pdb;pdb.set_trace()
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
@@ -400,7 +432,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         #modifed by weihao
-        # import pdb; pdb.set_trace()
         batch = preprocessor(batch)
         #modifed by weihaoc
         # import pdb; pdb.set_trace()

@@ -12,18 +12,23 @@ from safetensors.torch import load_file
 # print(state_dict_7G['model.paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.25.self_attn.v_proj.weight'].dtype)
 
 
+# with torch.no_grad():
+#     state_dict_origin = load_file("/home/k202/pi05_lerobot/model.safetensors", device="cpu")
+#     state_dict_5k = load_file("/home/k202/111/checkpoints/005000/pretrained_model/model.safetensors", device="cpu")
+#     state_dict_10k = load_file("/home/k202/111/checkpoints/010000/pretrained_model/model.safetensors", device="cpu")
+#     state_dict_15k = load_file("/home/k202/111/checkpoints/015000/pretrained_model/model.safetensors", device="cpu")
+
 with torch.no_grad():
-    state_dict_origin = load_file("/home/k202/pi05_lerobot/model.safetensors", device="cpu")
-    state_dict_5k = load_file("/home/k202/111/checkpoints/005000/pretrained_model/model.safetensors", device="cpu")
-    state_dict_10k = load_file("/home/k202/111/checkpoints/010000/pretrained_model/model.safetensors", device="cpu")
-    state_dict_15k = load_file("/home/k202/111/checkpoints/015000/pretrained_model/model.safetensors", device="cpu")
-
-for name, value in state_dict_10k.items():
-    try:
-        print(name, (state_dict_10k[name] == state_dict_origin[name[name.find(".") + 1:]]).all(), value.shape)
-    except:
-        continue
-
+    origin_state_dict = load_file("/home/k202/pi05_lerobot/model.safetensors", device="cpu")
+    trained_state_dict = load_file("/home/8TDisk/model0503_umiv1/checkpoints/003000/pretrained_model/model.safetensors", device="cpu")
+for name, value in trained_state_dict.items():
+    print(name)
+    # try:
+    #     if not (value == trained_state_dict["model." + name]).all():
+    #         print(name)
+    # except:
+    #     print("error")
+    #     continue
 
 
 

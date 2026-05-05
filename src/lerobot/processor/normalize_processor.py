@@ -253,7 +253,7 @@ class _NormalizationMixin:
         new_observation = dict(observation)
         for key, feature in self.features.items():
             # Modified by DK
-            print("数据是否进行归一化", "|", key in new_observation, "|", key, "|", feature.type, "|", new_observation.keys())
+            # print("数据是否进行归一化", "|", key in new_observation, "|", key, "|", feature.type, "|", new_observation.keys())
 
             if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
                 continue
@@ -306,7 +306,7 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        #print("数据类型与归一化方式:", feature_type, norm_mode)
+        # print("数据类型与归一化方式:", feature_type, norm_mode)
         if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
             return tensor
 
@@ -342,6 +342,7 @@ class _NormalizationMixin:
             return (tensor - mean) / denom
 
         if norm_mode == NormalizationMode.MIN_MAX:
+            # import pdb; pdb.set_trace()
             min_val = stats.get("min", None)
             max_val = stats.get("max", None)
             if min_val is None or max_val is None:
@@ -364,13 +365,13 @@ class _NormalizationMixin:
             return 2 * (tensor - min_val) / denom - 1
 
         if norm_mode == NormalizationMode.QUANTILES:
+            # import pdb; pdb.set_trace()
             q01 = stats.get("q01", None)
             q99 = stats.get("q99", None)
             if q01 is None or q99 is None:
                 raise ValueError(
                     "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
-
             denom = q99 - q01
             # Avoid division by zero by adding epsilon when quantiles are identical
             denom = torch.where(
@@ -379,6 +380,7 @@ class _NormalizationMixin:
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q01
             return 2.0 * (tensor - q01) / denom - 1.0
+
 
         if norm_mode == NormalizationMode.QUANTILE10:
             q10 = stats.get("q10", None)

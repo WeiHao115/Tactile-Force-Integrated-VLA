@@ -372,7 +372,7 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.torch_dtype = "float32"
         # Modified by DK, 指定LORA
-        vlm_config_hf.vision_config.lora = True
+        vlm_config_hf.vision_config.lora = False
         vlm_config_hf.text_config.lora = False  # 文本不用
 
         action_expert_config_hf = CONFIG_MAPPING["gemma"](
@@ -388,7 +388,7 @@ class PaliGemmaWithExpertModel(
             use_adarms=use_adarms[1],
             adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
         )
-        action_expert_config_hf.lora = True    # Modified by DK, 指定LORA
+        action_expert_config_hf.lora = False    # Modified by DK, 指定LORA
 
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
@@ -665,7 +665,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
-
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
@@ -977,15 +976,15 @@ class PI05Policy(PreTrainedPolicy):
                 param.requires_grad = True
             elif "action_out_proj" in name:
                 param.requires_grad = True
-            # elif "gemma_expert" in name:
-            #     param.requires_grad = True
+            elif "gemma_expert" in name:
+                param.requires_grad = True
              # 2. 放开时间步嵌入的特征投影层
             elif "time_mlp_in" in name:
                 param.requires_grad = True
             elif "time_mlp_out" in name:
                 param.requires_grad = True
-            elif "lora" in name:
-                param.requires_grad = True
+            # elif "lora" in name:
+            #     param.requires_grad = True
             # elif "vision_tower" in name:
             #     param.requires_grad = True
         # ==========================================
@@ -994,36 +993,35 @@ class PI05Policy(PreTrainedPolicy):
 
         self.reset()
 
-    # #############################################################weihao
-    def train(self, mode: bool = True):
-        super().train(mode)
-        if mode:
-            # 首先强制将整个模型置于 eval 模式
-            self.model.eval()
+    # # #############################################################weihao
+    # def train(self, mode: bool = True):
+    #     super().train(mode)
+    #     if mode:
+    #         # 首先强制将整个模型置于 eval 模式
+    #         self.model.eval()
             
-            # 针对需要训练的模块单独启用 train 模式
+    #         # 针对需要训练的模块单独启用 train 模式
             
-            # 激活多模态投影层
-            self.model.paligemma_with_expert.paligemma.model.multi_modal_projector.train()
+    #         # 激活多模态投影层
+    #         self.model.paligemma_with_expert.paligemma.model.multi_modal_projector.train()
             
-            # 激活核心动作大模型（Expert分支）
-            self.model.paligemma_with_expert.gemma_expert.train()
+    #         # 激活核心动作大模型（Expert分支）
+    #         self.model.paligemma_with_expert.gemma_expert.train()
             
-            # 激活扩散模型的时间步嵌入投影层
-            self.model.time_mlp_in.train()
-            self.model.time_mlp_out.train()
+    #         # 激活扩散模型的时间步嵌入投影层
+    #         self.model.time_mlp_in.train()
+    #         self.model.time_mlp_out.train()
             
-            # 激活连续动作空间的输入输出投影层
-            self.model.action_in_proj.train()
-            self.model.action_out_proj.train()
+    #         # 激活连续动作空间的输入输出投影层
+    #         self.model.action_in_proj.train()
+    #         self.model.action_out_proj.train()
 
-            for name, module in self.model.named_modules():
-                if "lora" in name.lower():
-                    module.train()
-            # 激活视觉主干
-            # self.model.paligemma_with_expert.paligemma.model.vision_tower.train()
-
-    # #######################################################################
+    #         for name, module in self.model.named_modules():
+    #             if "lora" in name.lower():
+    #                 module.train()
+    #         # 激活视觉主干
+    #         # self.model.paligemma_with_expert.paligemma.model.vision_tower.train()
+    # # #######################################################################
 
 
     @classmethod
@@ -1255,6 +1253,9 @@ class PI05Policy(PreTrainedPolicy):
             )
 
         # Preprocess image features present in the batch
+        # import pdb; pdb.set_trace()
+        # import cv2
+        # cv2.imwrite("/home/k202/lerobot/src/lerobot/policies/pi05/test_gopro.jpg", torch.permute(((batch['observation.images.gopro'] * 255).int())[0], (1, 2, 0)).cpu().numpy())
         for key in present_img_keys:
             img = batch[key]
 
@@ -1322,7 +1323,6 @@ class PI05Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            print("开始执行前向推理.........")
             # [B 50 8]
             actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
@@ -1365,6 +1365,9 @@ class PI05Policy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
 
         # Compute loss (no separate state needed for PI05)
+        # import cv2
+        # import numpy as np
+        # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/train_gopro.jpg", ((images[0][0] + 1) / 2 * 255).permute(1,2,0).cpu().numpy().astype(np.int32))
         losses = self.model.forward(images, img_masks, tokens, masks, actions)
 
         # Truncate losses to actual action dimensions

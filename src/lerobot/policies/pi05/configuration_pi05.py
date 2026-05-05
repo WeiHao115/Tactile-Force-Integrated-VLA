@@ -66,6 +66,7 @@ class PI05Config(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
+            # Modified by DK, QUANTILES -> MIN_MAX
             "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }

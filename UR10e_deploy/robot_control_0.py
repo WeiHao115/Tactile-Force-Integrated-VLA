@@ -28,10 +28,10 @@ from ur_ikfast import ur_kinematics
 # 机械臂操作相关代码
 class RobotOperation():
     def __init__(self, Ttool2tcp):
-        #modified by weihao  初始化 
+        
         moveit_commander.roscpp_initialize(sys.argv)
         self.move_group = moveit_commander.MoveGroupCommander("manipulator")
-        ##############################################
+
         # rospy.init_node("UR10_Robot_Gripper_Publisher")
         self.trajectory_publihser = rospy.Publisher('/pos_joint_traj_controller/command', JointTrajectory, queue_size=10)
         self.gripper_publihser = rospy.Publisher('/Robotiq2FGripperRobotOutput', outputMsg.Robotiq2FGripper_robot_output, queue_size=10)
@@ -53,7 +53,7 @@ class RobotOperation():
         self.init_gripper()
         self.get_joint_angle()      # 初始化之后就开始读取各个关节角
         self.ur10_arm = ur_kinematics.URKinematics('ur10')
-        # 【新增】给 close_num 一个初始默认值 (0.0 表示打开)
+        # 给 close_num 一个初始默认值 (0.0 表示打开)
         self.close_num = 0.0
 
     # [X Y Z 四元数]
@@ -83,10 +83,7 @@ class RobotOperation():
 
     # 输入的是手抓位姿，但控制的是tool0的位置，不是手抓的
     def UR10_moveto_pose(self, target_positions:list, max_velocity_scale=0.1, TCP=True):
-        #modified by weihao  重复初始化 
-        #moveit_commander.roscpp_initialize(sys.argv)
-        #move_group = moveit_commander.MoveGroupCommander("manipulator")
-        #################################################
+
         # move_group.set_pose_reference_frame('base_link')
         #modified by weihao 
         self.move_group.set_max_acceleration_scaling_factor(0.5)

@@ -229,12 +229,38 @@ class RobotOperation():
     # 获得末端执行器位姿
     # Twh hand到world的转换矩阵
     def get_ee_pose(self, return_quat=False):
+        now = rospy.Time.now()
+        self.tf_listener.waitForTransform('/base', '/tool0_controller', now, rospy.Duration(0.5))
         (trans, rot) = self.tf_listener.lookupTransform('/base', '/tool0_controller', rospy.Time(0))
         pose_numpy = np.array([trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], rot[3]])
         pose_matrix = convert_pose_quat2mat(pose_numpy)
         if return_quat:
             return pose_numpy
         return pose_matrix  # [4 4]
+    
+
+
+    def get_ee_pose_moveit(self, return_quat=False):
+        current_pose_msg = self.move_group.get_current_pose().pose
+
+        target_position = np.array([current_pose_msg.position.x, current_pose_msg.position.y, current_pose_msg.position.z,
+                                    current_pose_msg.orientation.x, current_pose_msg.orientation.y, current_pose_msg.orientation.z,
+                                    current_pose_msg.orientation.w])
+        T_bl_falan = convert_pose_quat2mat(target_position)
+        T_b_bl = np.linalg.inv(np.array([[-1, 0, 0, 0],
+                                        [0, -1, 0, 0],
+                                        [0, 0, 1, 0],
+                                        [0, 0, 0, 1]]))
+        T_b_falan = T_b_bl @ T_bl_falan
+        T_falan_tcp = np.linalg.inv(self.Ttool2tcp)
+        pose_numpy = convert_pose_mat2quat(T_b_falan @ T_falan_tcp)
+        # pose_numpy[3:] = pose_numpy[3:] * -1
+        if return_quat:
+            return pose_numpy
+        pose_matrix = convert_pose_quat2mat(pose_numpy)
+        return pose_matrix
+
+
 
 
     # 获得末端执行器三维坐标
@@ -305,13 +331,13 @@ class RobotOperation():
 
     def close_gripper_num(self, clouse_num):
         clouse_num = max(0.0, min(float(clouse_num), 100.0))
-        if self.gripper_state == 0.0 and clouse_num > 15:
+        if self.gripper_state == 0.0 and clouse_num > 1:
             clouse_num = 100.0
             self.gripper_state = 1.0
         elif self.gripper_state == 0.0 and clouse_num < 95:
             clouse_num = 0.0
             self.gripper_state = 0.0
-        elif self.gripper_state == 1.0 and clouse_num < 20:
+        elif self.gripper_state == 1.0 and clouse_num < 1:
             clouse_num = 0.0
             self.gripper_state = 0.0
         else:
@@ -324,7 +350,7 @@ class RobotOperation():
         msg.data = target_mm
         self.pub_pos_mm.publish(msg)
         
-        rospy.sleep(0.01)
+        rospy.sleep(0.25)
 
 
 
@@ -337,21 +363,43 @@ if __name__ == "__main__":
     Ttool2tcp = convert_pose_quat2mat(Ttool2tcp)
     
     robotoperation = RobotOperation(Ttool2tcp)
-    #
-    # pose = robotoperation.get_ee_pose(return_quat = True)
+    
+    import time
+    start_time = time.time()
+    pose = robotoperation.get_ee_pose(return_quat = True)
+    end_time = time.time()
+    print(end_time - start_time)
+    print(pose)
+
+    start_time = time.time()
+    pose = robotoperation.get_ee_pose_moveit(return_quat = True)
+    end_time = time.time()
+    print(end_time - start_time)
+    print(pose)
+    # exit()
+
     #print(pose)# reset_reg_cost         : 1.30896
     # exit()
     # rospy.sleep(5)
     # print("夹爪闭合50%")
     # robotoperation.close_gripper_num(50)
+    # rospy.sleep(5)
     # print("夹爪闭合100%")
+    # robotoperation.close_gripper_num(100)
+    # rospy.sleep(5)
+    # print("夹爪打开")
     robotoperation.close_gripper_num(100)
-    print("夹爪打开")
-    robotoperation.close_gripper_num(0)   
+    rospy.sleep(1)
+    robotoperation.close_gripper_num(0)
+    rospy.sleep(1)
     # ！！！！！！！！！！！！！BEST POSE
     #robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
   
     #UMI起始位姿
-    robotoperation.UR10_moveto_pose([[-0.4469,  0.7455,  0.1223,  0.9197,  0.0189,  0.0247, -0.3913]])
+    # robotoperation.UR10_moveto_pose([[-0.449306, 0.755043, 0.124363, -0.997934, -0.037414, 0.049210, 0.017526]])
+    robotoperation.UR10_moveto_pose([[-0.431347,  0.724575,  0.138996, -0.923718, -0.025503,  0.041791,  0.379931]])
+
+    # robotoperation.UR10_moveto_pose([[-0.4329,  0.6481,  0.4966, -0.9341, -0.1634, -0.0201,  0.3169]])
+    # robotoperation.UR10_moveto_pose([[-0.4397,  0.7502,  0.1838,  0.9826, -0.0101, -0.0814, -0.1665]])
     #robotoperation.UR10_moveto_pose([[-0.5086,  0.4094,  0.4879,  0.0859,  0.3307,  0.9380,  0.0578]])
     #robotoperation.UR10_moveto_pose([[  -0.4659,  0.7025,  0.0628,  0.9274, -0.0289, -0.0249, -0.3721]])

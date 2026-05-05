@@ -542,10 +542,8 @@ if __name__ == "__main__":
                                 [ 0.       ,   0.    ,      0.     ,     1.        ]])
                                         
  
-
-    
-    UMI_POS = np.array([381.1112283557068, 953.4972181783926, 309.36917521767333]) / 1000     
-    UMITCP_POS = np.array([ 475.991478254513 ,954.1254038034119, 214.44773385214467]) / 1000    
+    UMI_POS = np.array([363.4473073071311 ,1208.3283104883744, 305.06626371888166]) / 1000     
+    UMITCP_POS = np.array([ 500.55924340455573 ,1214.2269269806513 ,216.94456494133658]) / 1000    
 
     P_UMI_UMITCP = UMITCP_POS - UMI_POS
 
@@ -554,7 +552,8 @@ if __name__ == "__main__":
                              [0, 0, 1,  P_UMI_UMITCP[2]],
                              [0, 0, 0, 1]])
     
-    T_capture_UMI = np.loadtxt("/home/k202/0421/000195/umi_body_abs.txt")[::10][:, 1:]  # [N 7]
+    T_capture_UMI = np.loadtxt("/home/k202/0503/000033/umi_body_abs.txt")[::10][:, 1:]  # [N 7]
+
     T_capture_UMI[:, :3] = T_capture_UMI[:, :3] / 1000
     T_capture_UMI = convert_pose_quat2mat(T_capture_UMI)    # [N 4 4]
     print(T_capture_UMI.shape)
@@ -569,7 +568,7 @@ if __name__ == "__main__":
     print(T_robot_TCP)
 
 
-    gripper_state = np.loadtxt("/home/k202/0421/000195/gripper_state_time.txt")
+    gripper_state = np.loadtxt("/home/k202/0503/000033/gripper_state_time.txt")
     gripper_state = gripper_state[::10][:, 1]
 
 
@@ -625,6 +624,10 @@ if __name__ == "__main__":
 
     robotoperation.close_with_pos(100)
     robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
+    
+    
+    # T_robot_TCP = "/home/k202/0425_replayoutput/000033/ur10_ee_pose.txt"
+    # T_robot_TCP = np.loadtxt(T_robot_TCP)[:, 1:]
     for index, i in enumerate(range(T_robot_TCP.shape[0])):
         robotoperation.UR10_moveto_pose([T_robot_TCP[i]])
         print(f"机械臂位姿：{[T_robot_TCP[i]]}")
@@ -650,6 +653,3 @@ if __name__ == "__main__":
     # # rospy.sleep(3)
     robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
 
-
-
-    
