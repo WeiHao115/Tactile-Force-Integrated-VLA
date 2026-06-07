@@ -50,35 +50,15 @@ from UR10e_deploy.robot_control import RobotOperation
 from UR10e_deploy.transform_utils import convert_pose_quat2mat, convert_pose_euler2quat, convert_pose_euler2mat, \
     convert_pose_mat2quat
 from data_trans import PI05_Data_Trans
-
-
 from dataclasses import dataclass
 from lerobot.configs.policies import PreTrainedConfig
 from safetensors.torch import load_file
-
 @dataclass
 class DeployConfig:
     policy: PreTrainedConfig
-
-
 from pathlib import Path
 
-def process_and_resize_frame(frame_bgr, target_size):
-    """
-    对内存中的 NumPy 图像阵列进行中心裁剪和缩放
-    """
-    if frame_bgr is None:
-        return None
-        
-    h, w = frame_bgr.shape[:2]
-    short_edge = min(h, w)
-    start_x = (w - short_edge) // 2
-    start_y = (h - short_edge) // 2
-    
-    img_cropped = frame_bgr[start_y:start_y+short_edge, start_x:start_x+short_edge]
-    img_resized = cv2.resize(img_cropped, target_size)
-    
-    return img_resized
+
 
 class UR10ePolicyRunner:
     def __init__(self, cfg: DeployConfig):
@@ -139,8 +119,7 @@ class UR10ePolicyRunner:
 
         # 7. 初始化硬件
         print("Initializing Camera...")
-        #self.tactile_manager = GelSightManager()
-        self.gopro_manager = GoproManager(device_id=6, width=224, height=224, fps=30)
+        self.gopro_manager = GoproManager(device_id=0, width=224, height=224, fps=30)
         self.realsense = RealsenseRosManager()
         self.force_manager = ForceTorqueManager(topic_name="/landian_wrench", save_dir="", median_window=310)
         self.force_deque_filter = deque(maxlen = 31)
@@ -163,11 +142,7 @@ class UR10ePolicyRunner:
 
 
     def get_observation(self, task_intru):
-        # print("\n 1. 进入 get_observation...")
-        # 1. 采集原始数据
-        # --- 诊断点 1: 机械臂通信 ---
-        # print("2. 正在请求机械臂位姿 ...")
-        quat_state = self.robot.get_ee_pose_rtde(return_quat=True) 
+        angle_state = self.robot.get_joint_angle_rtde() 
         print("正在请求六维力数据...")
         force_state = self.force_manager.get_filtered_wrench()  # 当前的实时观测数据
         print("六维力数据：",force_state)
@@ -183,16 +158,8 @@ class UR10ePolicyRunner:
         self.all_force.append(force_state[0])
         np.savetxt("/home/k202/lerobot/UR10e_deploy/multimodal_records/force_test.txt", np.array(self.all_force))
 
-
-        # import pdb; pdb.set_trace()
-        # Modified by DK
-        # print(f"成功获取位姿: {quat_state}")
-        # --- 诊断点 2: 相机通信 ---
         # print("3. 正在请求相机图像 ...")
         gopro_image, _ = self.gopro_manager.get_latest_frame()
-        # import pdb;pdb.set_trace()
-        # plt.imsave("/home/k202/lerobot/src/lerobot/scripts/test_gopro_wtq.jpg", gopro_image)
-        print("################################")
         realsense_image , _ =self.realsense.get_latest_frame()
 
         if gopro_image is not None :
@@ -202,17 +169,11 @@ class UR10ePolicyRunner:
             cv2.imshow("Realsense Camera", realsense_image)
             cv2.waitKey(100)
 
-        # print("4. 正在请求触觉图像 ...")
-        # tactile_image_1, tactile_image_2, _= self.tactile_manager.get_tactile_frame()
-        # print("成功获取触觉图像")
-    
-        # 2. 格式化：对齐 observation.state
         gripper_state = self.robot.close_num 
         gripper_state = 1 if gripper_state / 100 > 0.25 else 0
-        # 拼接成 8 维向量
-        state_np = np.append(quat_state, gripper_state)
+        # 拼接成 7 维向量
+        state_np = np.append(angle_state, gripper_state)
         state_tensor = torch.from_numpy(state_np).float()
-
         force_tensor = torch.from_numpy(force_state).float()
 
         gopro_image = cv2.cvtColor(gopro_image, cv2.COLOR_BGR2RGB)
@@ -223,18 +184,10 @@ class UR10ePolicyRunner:
         realsense_image_tensor = torch.from_numpy(realsense_image).float() / 255.0
         realsense_image_tensor = realsense_image_tensor.permute(2, 0, 1) # [H,W,C] -> [C,H,W]
 
-
-        # tactile_image_1_tensor = torch.from_numpy(tactile_image_1).float() / 255.0
-        # tactile_image_1_tensor = tactile_image_1_tensor.permute(2,0,1)
-        # tactile_image_2_tensor = torch.from_numpy(tactile_image_2).float() / 255.0
-        # tactile_image_2_tensor = tactile_image_2_tensor.permute(2,0,1)
-
         # 4. 返回符合 LeRobotDataset 标准的字典
         return {
             "observation.images.gopro": gopro_image_tensor,
             "observation.images.realsense": realsense_image_tensor,
-            # "observation.images.tactile_left": tactile_image_1_tensor,
-            # "observation.images.tactile_right": tactile_image_2_tensor,
             "observation.state": state_tensor,
             "observation.force": force_tensor,
             "task": task_intru  
@@ -252,9 +205,17 @@ class UR10ePolicyRunner:
                 # 1. 获取观测 and 预处理
                 raw_obs = self.get_observation(task_intru)
                 print(f'raw_obs.keys:{raw_obs.keys()}')
-                # tensor([[-0.4701,  0.7279,  0.1794, -0.9925, -0.0394,  0.0687,  0.0934,  0.0000]])
+
+                # 撞到的分支
+                # raw_force_coll = raw_obs['observation.force'].cup().numpy()
+                # if raw_force_coll[0][2] <= -2:
+                #     bad_pose = self.robot.get_ee_pose(return_quat=True)
+                #     self.robot.UR10_moveto_pose_rtde(bad_pose[0],bad_pose[1],bad_pose[2]+20,bad_pose[3],bad_pose[4],bad_pose[5],bad_pose[6])
+                #     rospy.sleep(0.01)
+                #     self.robot.UR10_moveto_pose_rtde(bad_pose[0]+5,bad_pose[1],bad_pose[2],bad_pose[3],bad_pose[4],bad_pose[5],bad_pose[6])
+                #     continue
+
                 batch = self.preprocessor(raw_obs)
-                #import pdb; pdb.set_trace()
                 for key in batch:
                     if isinstance(batch[key], torch.Tensor):
                         batch[key] = batch[key].to(self.device, non_blocking=True)
@@ -265,76 +226,45 @@ class UR10ePolicyRunner:
             with torch.inference_mode():
                 # 获取原始动作
                 while len(action_pose_list) < action_num:
-                    #test by li
-                    #import pdb; pdb.set_trace()
-                    # plt.imsave("/home/k202/lerobot/src/lerobot/scripts/train_gopro_wtq.jpg", (dataset[10]['observation.images.gopro'].permute(1, 2, 0).cpu().numpy()))
-                    # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/train_gopro_wtq.jpg", (dataset[0]['observation.images.gopro']*255).permute(1,2,0).cpu().numpy().astype(np.int32))
-                    # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/test_gopro.jpg", (batch['observation.images.gopro'][0] * 255).permute(1,2,0).cpu().numpy().astype(np.int32))
-                    # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/test_realsense.jpg", (batch['observation.images.realsense'][0] * 255).permute(1,2,0).cpu().numpy().astype(np.int32))
-                    # exit()
                     action = self.policy.select_action(batch)
                     action = self.postprocessor(action)
                     action_pose_list.append(action) # [[1 8]shape, [1 8]shape, ...]
                     gripper_all.append(action[0, -1])
                 
-
-                start_pose = np.eye(4)  # [4 4]
+                start_angle = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])  # [4 4]
                 start_gripper = 0
 
                 for i in range(action_num):
                     current_all = action_pose_list[i]
-                    current_pose_quat = current_all[:, :7]   # [1 7]
-                    current_gripper = current_all[:, [-1]]  # [1 1]
-                    current_pose_mat = convert_pose_quat2mat(current_pose_quat.cpu().numpy())[0]   # [4 4]
-                    start_pose = np.matmul(start_pose, current_pose_mat)    # [4 4]
+                    current_pose_angle = current_all[:, :6].cpu().numpy()   # [1 7]
+                    current_gripper = current_all[:, [6]]  # [1 1]
+                    start_angle = start_angle + current_pose_angle
                     start_gripper = current_gripper.cpu().numpy()[0, 0]
 
-                start_pose = torch.from_numpy(convert_pose_mat2quat(start_pose[None])).cuda()
+                start_pose = torch.from_numpy(start_angle).cuda()   # [1 6]
                 start_gripper = torch.from_numpy(start_gripper[None, None]).cuda()
-                action = torch.cat((start_pose, start_gripper), dim=1)
+                action = torch.cat((start_pose, start_gripper), dim=1)  # [1 7]
 
 
-            print("预测位姿", action)
-            #tensor([[-0.0012,  0.0025, -0.0008,  0.9999,  0.0010, -0.0021,  0.0053,  0.4520]]
-
-
-            # 3. 动作解析
+            print("预测关节角", action)
             action_numpy = action.cpu().numpy()
-            pose_quat_numpy = action_numpy[:, :7]
-            pose_mat_numpy = convert_pose_quat2mat(pose_quat_numpy)[0]    # [4 4]
+            pose_angle_numpy = action_numpy[0, :6]
 
-            #self.robot.subscribr_gripper_angle()
-            #gripper_val = self.robot.close_num
-
-            raw_gripper_val = float(action_numpy[:, -1])
+            raw_gripper_val = float(action_numpy[:, 6])
             print(raw_gripper_val)
             target_gripper_val = raw_gripper_val * 100.0
             gripper_val = max(0.0, min(100.0, target_gripper_val))
 
-            curr_pose = self.robot.get_ee_pose_rtde(return_quat=False)# [4 4] 
-            #import pdb;pdb.set_trace()  
-            action_mat_pose = np.matmul(curr_pose, pose_mat_numpy)
-            # test by li
-            #import pdb;pdb.set_trace()    
-            #0.452031
-            #目标夹爪闭合百分比: 45.20
-            #运动到的位姿： [ 0.1254, -0.5841,  0.2210,  0.7071,  0.0000,  0.0000,  0.7071] 
-            #         
-            # print("=================================")
-            # print("转换前前前位姿")
-            # print(curr_pose)
-            # print("转换后后后位姿")
-            # print(action_mat_pose)
-            # print("=================================")
-            # rospy.sleep(20)
-
-            action_quat_pose = convert_pose_mat2quat(action_mat_pose)
+            curr_angle = self.robot.get_joint_angle_rtde()  # [6] 
+            action_angle = curr_angle + pose_angle_numpy    # [6]
             print(f"目标夹爪闭合百分比: {gripper_val:.2f}")
-            print("运动到的位姿：", action_quat_pose)
+            print("运动到的关节角：", action_angle)
 
             self.robot.close_gripper_num(gripper_val)
-            self.robot.UR10_moveto_pose_rtde(list(action_quat_pose[None]))
-            # self.robot.UR10_moveto_pose(list(action_quat_pose[None]))
+            while not self.robot.rtde_c.isSteady():
+                time.sleep(0.002)
+            self.robot.UR10_moveto_angle_rtde(action_angle)
+            time.sleep(0.02)
             step += 1
 
 

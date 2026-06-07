@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule  # noqa: E402
-from lerobot.policies.pi05 import PI05Config, PI05Policy, make_pi05_pre_post_processors  # noqa: E402
+from lerobot.policies.pi05_ori import PI05Config, PI05Policy, make_pi05_pre_post_processors  # noqa: E402
 from lerobot.policies.rtc.configuration_rtc import RTCConfig  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402

@@ -318,7 +318,7 @@ class RobotOperation():
         msg.data = float(target_pos_mm)
 
         self.pub_pos_mm.publish(msg)
-        rospy.sleep(0.01)
+        rospy.sleep(0.1)
 
     def close_gripper_num(self, clouse_num):
         clouse_num = max(0.0, min(float(clouse_num), 100.0))
@@ -536,14 +536,13 @@ def detect_gripper_events_by_accumulation(coords1, coords2, threshold=10):
 if __name__ == "__main__":
     
     from transform_utils import convert_pose_quat2mat, convert_pose_mat2quat
+ 
     T_robot_capture = np.array([[-0.02582595, -0.99962434 ,-0.0091759 ,  0.67198311],
                                 [ 0.99966532, -0.02583864 , 0.00126633 , 0.40664717],
                                 [-0.00150295, -0.00914013 , 0.9999571 ,  0.01686246],
                                 [ 0.       ,   0.    ,      0.     ,     1.        ]])
-                                        
- 
     UMI_POS = np.array([363.4473073071311 ,1208.3283104883744, 305.06626371888166]) / 1000     
-    UMITCP_POS = np.array([ 500.55924340455573 ,1214.2269269806513 ,216.94456494133658]) / 1000    
+    UMITCP_POS = np.array([ 500.55924340455573 ,1214.2269269806513 ,216.94456494133658]) / 1000       
 
     P_UMI_UMITCP = UMITCP_POS - UMI_POS
 
@@ -552,7 +551,7 @@ if __name__ == "__main__":
                              [0, 0, 1,  P_UMI_UMITCP[2]],
                              [0, 0, 0, 1]])
     
-    T_capture_UMI = np.loadtxt("/home/k202/0503/000033/umi_body_abs.txt")[::10][:, 1:]  # [N 7]
+    T_capture_UMI = np.loadtxt("/home/k202/59test/000015/umi_body_abs.txt")[::10][:, 1:]  # [N 7]
 
     T_capture_UMI[:, :3] = T_capture_UMI[:, :3] / 1000
     T_capture_UMI = convert_pose_quat2mat(T_capture_UMI)    # [N 4 4]
@@ -568,7 +567,7 @@ if __name__ == "__main__":
     print(T_robot_TCP)
 
 
-    gripper_state = np.loadtxt("/home/k202/0503/000033/gripper_state_time.txt")
+    gripper_state = np.loadtxt("/home/k202/59test/000015/gripper_state_time.txt")
     gripper_state = gripper_state[::10][:, 1]
 
 
@@ -585,7 +584,7 @@ if __name__ == "__main__":
     # robotoperation.close_with_pos(200)
     pose = robotoperation.get_ee_pose(return_quat = True)
     
-    print(pose)# reset_reg_cost         : 1.30896
+    # print(pose)# reset_reg_cost         : 1.30896
    
 
 
@@ -622,12 +621,13 @@ if __name__ == "__main__":
     #            header='timestamp x y z qx qy qz qw gripper_state',
     #            comments='# ')
 
-    robotoperation.close_with_pos(100)
+    # robotoperation.close_with_pos(100)
+
+    
     robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
-    
-    
-    # T_robot_TCP = "/home/k202/0425_replayoutput/000033/ur10_ee_pose.txt"
-    # T_robot_TCP = np.loadtxt(T_robot_TCP)[:, 1:]
+    T_robot_TCP = "/home/k202/test111/000004/ur10_ee_pose.txt"
+    T_robot_TCP = np.loadtxt(T_robot_TCP)[:, 1:]
+    gripper_state = np.loadtxt("/home/k202/test111/000004/gripper_state_record.txt")[:, 1]
     for index, i in enumerate(range(T_robot_TCP.shape[0])):
         robotoperation.UR10_moveto_pose([T_robot_TCP[i]])
         print(f"机械臂位姿：{[T_robot_TCP[i]]}")
@@ -647,9 +647,11 @@ if __name__ == "__main__":
     # rospy.sleep(3)
     # robotoperation.close_with_pos(70)
     # rospy.sleep(3)
-    # robotoperation.close_with_pos(100)
+    # robotoperation.close_with_pos(0)
     # rospy.sleep(3)
+    # robotoperation.close_with_pos(0)
+    # # rospy.sleep(3)
     # # robotoperation.close_with_pos(0)
     # # rospy.sleep(3)
-    robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
+    # robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
 

@@ -70,7 +70,7 @@ class PI05Config(PreTrainedConfig):
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
     ######################3weihao
-    force_window_size: int = 5  # 力觉数据的历史时序窗口长度
+    force_window_size: int = 10  # 力觉数据的历史时序窗口长度
     force_dim: int = 6           # 六维力
     empty_forces: int = 0        # 处理缺失力觉传感器的情况
 

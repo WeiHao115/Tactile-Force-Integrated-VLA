@@ -113,6 +113,9 @@ def visualize_dataset(
 
     logging.info("Starting Rerun")
 
+
+
+
     if mode not in ["local", "distant"]:
         raise ValueError(mode)
 
@@ -145,10 +148,21 @@ def visualize_dataset(
                 for dim_idx, val in enumerate(batch[ACTION][i]):
                     rr.log(f"{ACTION}/{dim_idx}", rr.Scalars(val.item()))
 
-            # display each dimension of observed state space (e.g. agent position in joint space)
+            # display each dimension of observed state space (e.g. agent position in joint space)  weihao
             if OBS_STATE in batch:
                 for dim_idx, val in enumerate(batch[OBS_STATE][i]):
                     rr.log(f"state/{dim_idx}", rr.Scalars(val.item()))
+
+            # 解析并显示自定义的六维力数据 (取时间窗口的最后一帧)
+            if "observation.force" in batch:
+                # 获取当前样本的力觉窗口张量，预期形状为 (10, 6)
+                force_window = batch["observation.force"][i]
+                # 提取窗口中的最后一行（最新受力状态），形状变为 (6,)
+                current_force = force_window[-1]
+                
+                force_labels = ['Fx', 'Fy', 'Fz', 'Tx', 'Ty', 'Tz']
+                for dim_idx, label in enumerate(force_labels):
+                    rr.log(f"observation.force/{label}", rr.Scalars(current_force[dim_idx].item()))
 
             if DONE in batch:
                 rr.log(DONE, rr.Scalars(batch[DONE][i].item()))

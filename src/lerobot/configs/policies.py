@@ -146,6 +146,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     @property
     def tactile_features(self) -> dict[str, PolicyFeature]:
         return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.TACTILE}
+    
+    @property
+    def force_features(self) -> dict[str, PolicyFeature]:
+        return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.FORCE}
     ################################################################
 
 

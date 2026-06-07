@@ -247,14 +247,17 @@ class UR10ePolicyRunner:
         step = 0
         gripper_all = []
         self.policy.config.n_action_steps = 1
+        curr_pose = self.robot.get_ee_pose_rtde(return_quat=False)   # [4 4] 
+
         while step < self.max_steps:
             if len(self.policy._action_queue) == 0:
                 # 1. 获取观测 and 预处理
                 raw_obs = self.get_observation(task_intru)
                 print(f'raw_obs.keys:{raw_obs.keys()}')
+                # import pdb; pdb.set_trace()
                 # tensor([[-0.4701,  0.7279,  0.1794, -0.9925, -0.0394,  0.0687,  0.0934,  0.0000]])
                 batch = self.preprocessor(raw_obs)
-                #import pdb; pdb.set_trace()
+                # import pdb; pdb.set_trace()
                 for key in batch:
                     if isinstance(batch[key], torch.Tensor):
                         batch[key] = batch[key].to(self.device, non_blocking=True)
@@ -265,8 +268,7 @@ class UR10ePolicyRunner:
             with torch.inference_mode():
                 # 获取原始动作
                 while len(action_pose_list) < action_num:
-                    #test by li
-                    #import pdb; pdb.set_trace()
+                    # import pdb; pdb.set_trace()
                     # plt.imsave("/home/k202/lerobot/src/lerobot/scripts/train_gopro_wtq.jpg", (dataset[10]['observation.images.gopro'].permute(1, 2, 0).cpu().numpy()))
                     # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/train_gopro_wtq.jpg", (dataset[0]['observation.images.gopro']*255).permute(1,2,0).cpu().numpy().astype(np.int32))
                     # cv2.imwrite("/home/k202/lerobot/src/lerobot/scripts/test_gopro.jpg", (batch['observation.images.gopro'][0] * 255).permute(1,2,0).cpu().numpy().astype(np.int32))
@@ -280,7 +282,6 @@ class UR10ePolicyRunner:
 
                 start_pose = np.eye(4)  # [4 4]
                 start_gripper = 0
-
                 for i in range(action_num):
                     current_all = action_pose_list[i]
                     current_pose_quat = current_all[:, :7]   # [1 7]
@@ -295,9 +296,6 @@ class UR10ePolicyRunner:
 
 
             print("预测位姿", action)
-            #tensor([[-0.0012,  0.0025, -0.0008,  0.9999,  0.0010, -0.0021,  0.0053,  0.4520]]
-
-
             # 3. 动作解析
             action_numpy = action.cpu().numpy()
             pose_quat_numpy = action_numpy[:, :7]
@@ -311,15 +309,10 @@ class UR10ePolicyRunner:
             target_gripper_val = raw_gripper_val * 100.0
             gripper_val = max(0.0, min(100.0, target_gripper_val))
 
-            curr_pose = self.robot.get_ee_pose_rtde(return_quat=False)# [4 4] 
-            #import pdb;pdb.set_trace()  
-            action_mat_pose = np.matmul(curr_pose, pose_mat_numpy)
-            # test by li
-            #import pdb;pdb.set_trace()    
-            #0.452031
-            #目标夹爪闭合百分比: 45.20
-            #运动到的位姿： [ 0.1254, -0.5841,  0.2210,  0.7071,  0.0000,  0.0000,  0.7071] 
-            #         
+
+            curr_pose = np.matmul(curr_pose, pose_mat_numpy)
+            action_mat_pose = curr_pose
+            
             # print("=================================")
             # print("转换前前前位姿")
             # print(curr_pose)
@@ -340,6 +333,7 @@ class UR10ePolicyRunner:
 
 
 if __name__ == "__main__":
+    
     try:
         rospy.init_node("UR10_PI05")
         

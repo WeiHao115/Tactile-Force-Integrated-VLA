@@ -23,7 +23,6 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 DEFAULT_IMAGE_SIZE = 224
-DEFAULT_TACTILE_IMAGE_SIZE = 224
 
 @PreTrainedConfig.register_subclass("pi05")
 @dataclass
@@ -34,7 +33,7 @@ class PI05Config(PreTrainedConfig):
 
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
-    n_action_steps: int = 10  # Number of action steps to execute
+    n_action_steps: int = 4  # Number of action steps to execute
 
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
@@ -58,28 +57,16 @@ class PI05Config(PreTrainedConfig):
     )  # see openpi `preprocessing_pytorch.py`
 
 
-    ####################################################Modified by weihao
-    tactile_image_size: tuple[int, int] = (
-        DEFAULT_TACTILE_IMAGE_SIZE,
-        DEFAULT_TACTILE_IMAGE_SIZE,
-    )
-
     #######################################################
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
-    ######################3weihao
-    force_window_size: int = 5  # 力觉数据的历史时序窗口长度
-    force_dim: int = 6           # 六维力
-    empty_forces: int = 0        # 处理缺失力觉传感器的情况
-
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "TACTILE": NormalizationMode.IDENTITY,
-            "FORCE": NormalizationMode.QUANTILES,  #????? 这个地方如何考虑？？？
+            # Modified by DK, QUANTILES -> MIN_MAX
             "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
@@ -153,13 +140,6 @@ class PI05Config(PreTrainedConfig):
             )
             self.output_features["action"] = action_feature
             
-        ################modified by weihao
-
-        for key, feature_type in self.input_features.items():
-            if "tactile" in key:
-                feature_type.type = FeatureType.TACTILE
-            elif "force" in key:
-                feature_type.type = FeatureType.FORCE
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

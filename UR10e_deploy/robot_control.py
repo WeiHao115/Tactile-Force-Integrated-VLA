@@ -9,19 +9,38 @@ import tf
 import numpy as np
 from transform_utils import convert_pose_quat2mat, convert_pose_quat2euler, \
     convert_pose_mat2quat, convert_pose_quat2euler, convert_pose_euler2quat
+from scipy.spatial.transform import Rotation as R
 
+import os
 import moveit_commander
 import geometry_msgs.msg
 import copy 
 from std_msgs.msg import Float32, Int32
 import math
+from rtde_control import RTDEControlInterface
+from rtde_receive import RTDEReceiveInterface
+import subprocess
+import time
+
+def force_free_rtde_port(port=30004):
+    try:
+        result = subprocess.check_output(f"lsof -i :{port} -t", shell=True, text=True)
+        pids = result.strip().split('\n')
+        for pid in pids:
+            if pid:
+                print(f"[警告] 检测到本地进程 {pid} 正在占用 RTDE 端口 {port}，正在执行强杀...")
+                os.system(f"kill -9 {pid}")
+        print(f"[成功] 端口 {port} 已被强制释放。")
+        time.sleep(1)  # 给系统一点时间回收 socket 资源
+    except subprocess.CalledProcessError:
+        print(f"[正常] 本地端口 {port} 当前空闲。")
 
 
 # 机械臂操作相关代码
 class RobotOperation():
     def __init__(self, Ttool2tcp):
         # rospy.init_node("UR10_Robot_Gripper_Publisher")
-        self.trajectory_publihser = rospy.Publisher('/scaled_pos_joint_traj_controller/command', JointTrajectory, queue_size=10)
+        self.trajectory_publihser = rospy.Publisher('/scaled_pos_joint_traj_controller/command', JointTrajectory, queue_size=10) 
         self.UR10_joints = [
             "shoulder_pan_joint",
             "shoulder_lift_joint",
@@ -40,6 +59,10 @@ class RobotOperation():
         self.init_gripper()
         self.get_joint_angle()      # 初始化之后就开始读取各个关节角
         self.init_move_class()
+        # force_free_rtde_port(30004)
+        # # 初始化之后就不能用UR10_moveto_pose的moveit来控制了
+        self.rtde_c = RTDEControlInterface("192.168.1.102")
+        self.rtde_r = RTDEReceiveInterface("192.168.1.102")
     
 
     # [X Y Z 四元数]
@@ -67,18 +90,6 @@ class RobotOperation():
 
     # 输入的是手抓位姿，但控制的是tool0的位置，不是手抓的
     def UR10_moveto_pose(self, target_positions:list, max_velocity_scale=0.1, TCP=True):
-        # moveit_commander.roscpp_initialize(sys.argv)
-        # move_group = moveit_commander.MoveGroupCommander("manipulator")
-
-        # # move_group.set_pose_reference_frame('base_link')
-        # move_group.set_max_acceleration_scaling_factor(0.001)
-        # move_group.set_max_velocity_scaling_factor(max_velocity_scale)
-        # end_effector_link = move_group.get_end_effector_link()      # tool0
-
-        # # 设置规划时间和允许误差,提升路径规划成功率
-        # move_group.set_planning_time(10.0)
-        # move_group.set_goal_tolerance(0.1)
-
         waypoints = []
         for target_position in target_positions:
             # base坐标系中的位姿，手抓的位姿
@@ -143,41 +154,53 @@ class RobotOperation():
         # rospy.sleep(1)
 
 
+    # 使用UR10的库进行机械臂控制
+    def UR10_moveto_pose_rtde(self, target_positions: list, velocity=0.1, acceleration=0.1, blend_radius=0.01, TCP=False):
+        path = []
+        for i, target_position in enumerate(target_positions):
+            pos = np.array(target_position[:3])
+            quat = np.array(target_position[3:7]) # [x, y, z, w]
+
+            base_target_pose = np.eye(4)
+            base_target_pose[:3, :3] = R.from_quat(quat).as_matrix()
+            base_target_pose[:3, 3] = pos
+            
+            if TCP:
+                base_target_pose = np.matmul(base_target_pose, self.Ttool2tcp)
+
+            final_pos = base_target_pose[:3, 3]
+            final_rotvec = R.from_matrix(base_target_pose[:3, :3]).as_rotvec()
+            ur_pose = [final_pos[0], final_pos[1], final_pos[2], final_rotvec[0], final_rotvec[1], final_rotvec[2]]
+            current_blend = blend_radius if i < (len(target_positions) - 1) else 0.0
+            waypoint = ur_pose + [velocity, acceleration, current_blend]
+            path.append(waypoint)
+        success = self.rtde_c.moveL(path)
+
 
     def UR10_moveto_angle(self, goal_angle):
-        rospy.loginfo("Goal Position set lets go ! ")
-        # rospy.sleep(0.1)
         trajectory_msg = JointTrajectory()
+        trajectory_msg.header.stamp = rospy.Time.now() 
         trajectory_msg.joint_names = self.UR10_joints
-        trajectory_msg.points.append(JointTrajectoryPoint())
-        trajectory_msg.points[0].positions = goal_angle
-        trajectory_msg.points[0].velocities = [0.0 for i in self.UR10_joints]
-        trajectory_msg.points[0].accelerations = [0.0 for i in self.UR10_joints]
-        trajectory_msg.points[0].time_from_start = rospy.Duration(1)
-        # rospy.sleep(0.1)
+        
+        point = JointTrajectoryPoint()
+        point.positions = goal_angle
+        point.velocities = [0.0 for _ in self.UR10_joints]
+        point.accelerations = [0.0 for _ in self.UR10_joints]
+        point.time_from_start = rospy.Duration.from_sec(0.2)
+        trajectory_msg.points.append(point)
         self.trajectory_publihser.publish(trajectory_msg)
+    
 
-
-    # def UR10_moveto_IKSolver(self, opt_pose_quat):
-    #     moveit_commander.roscpp_initialize(sys.argv)
-    #     arm = moveit_commander.MoveGroupCommander("manipulator")
-
-    #     basetobaselink = np.array([[-1, 0, 0, 0],
-    #                                [0, -1, 0, 0],
-    #                                [0, 0, 1, 0],
-    #                                [0, 0, 0, 1]])
-    #     base_link_opt_pose_homo = np.matmul(basetobaselink, convert_pose_quat2mat(np.array(opt_pose_quat)))
-    #     self.get_joint_angle()
-    #     reset_joint_pos = self.joint_angle
-    #     # IK Solver求解结果
-    #     ik_solver_res = self.ur10_arm.inverse(convert_pose_mat2quat(base_link_opt_pose_homo), 
-    #                                     False,
-    #                                     q_guess = reset_joint_pos)
-    #     self.UR10_moveto_angle(ik_solver_res)
-
+    def UR10_moveto_angle_rtde(self, goal_angle, velocity=0.5, acceleration=0.25, blend_radius=0.0):
+        try:
+            waypoint = list(goal_angle) + [velocity, acceleration, blend_radius]
+            self.rtde_c.moveJ([waypoint])
+        except Exception as e:
+            rospy.logerr(f"RTDE 运动失败: {e}")
     
 
     
+
     #-------------------------------------------------------------------------------------------
     # TODO by DK -> MODIFIED by Gemini
     # 设置机械臂各个关键的初始角
@@ -237,7 +260,6 @@ class RobotOperation():
         if return_quat:
             return pose_numpy
         return pose_matrix  # [4 4]
-    
 
 
     def get_ee_pose_moveit(self, return_quat=False):
@@ -261,6 +283,27 @@ class RobotOperation():
         return pose_matrix
 
 
+    def get_ee_pose_rtde(self, return_quat = True):
+        tcp_pose = self.rtde_r.getActualTCPPose()
+        position = np.array(tcp_pose[:3])
+        rotvec = np.array(tcp_pose[3:6])
+
+        rot = R.from_rotvec(rotvec)
+        if return_quat:
+            quaternion = rot.as_quat()
+            return np.concatenate((position, quaternion))
+        else:
+            # 返回 4x4 齐次变换矩阵
+            T_matrix = np.eye(4)
+            T_matrix[:3, :3] = rot.as_matrix()
+            T_matrix[:3, 3] = position
+            return T_matrix
+
+
+    def close_rtde(self):
+        if hasattr(self, 'rtde_r'):
+            self.rtde_r.disconnect()
+            print("RTDE Receive Interface 已断开。")
 
 
     # 获得末端执行器三维坐标
@@ -268,6 +311,7 @@ class RobotOperation():
         (trans, rot) = self.tf_listener.lookupTransform('/base', '/tool0_controller', rospy.Time(0))
         pos_numpy = np.array([trans[0], trans[1], trans[2]])
         return pos_numpy  # [3]
+
 
     # 读取各个关节角的回调函数
     def get_joint_angle_callback(self, msg):
@@ -284,11 +328,24 @@ class RobotOperation():
         self.joint_angle = np.array(gt_joint_positions)
 
 
+    def get_joint_angle_new(self):
+        msg = rospy.wait_for_message('/joint_states', JointState, timeout=0.5)
+        gt_joint_name = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                            "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+        point_angle_dict = {name: val for name, val in zip(msg.name, msg.position)}
+        return np.array([point_angle_dict[name] for name in gt_joint_name])
+
+
+    def get_joint_angle_rtde(self):
+        return self.rtde_r.getActualQ()
+    
+
     # numpy [6]
     def get_joint_angle(self):
         sub = rospy.Subscriber('/joint_states', JointState, self.get_joint_angle_callback)
         rospy.sleep(1)
     
+
     def init_gripper(self):
         
         self.MAX_REGISTER = 1000.0
@@ -307,21 +364,22 @@ class RobotOperation():
         rospy.sleep(1.0)
         rospy.loginfo("DH Gripper Client Initialized.")
 
+
     def subscribr_gripper_angle(self, msg):
         #大寰的底层物理逻辑是0 mm 代表完全闭合，80 mm 代表完全张开，但是我们的定义是0 代表完全张开，80 代表完全闭合80mm，所以要进行转换
         current_register = float(msg.data)
         self.current_pos_register = current_register
-
-
         self.opening_mm = (current_register / self.MAX_REGISTER) * self.MAX_STROKE_MM
         self.opening_pct = 100.0 - ((current_register / self.MAX_REGISTER) * 100.0)
         self.close_num = self.opening_pct
         
+
     def close_with_force(self, target_force_n):
         rospy.loginfo("Close with force %.1f N", target_force_n)
         msg = Float32()
         msg.data = float(target_force_n)
         self.pub_force.publish(msg)
+
 
     def close_with_pos(self, target_pos_mm):
         rospy.loginfo("Close with position %.1f mm", target_pos_mm)
@@ -329,9 +387,10 @@ class RobotOperation():
         msg.data = float(target_pos_mm)
         self.pub_pos_mm.publish(msg)
 
+
     def close_gripper_num(self, clouse_num):
         clouse_num = max(0.0, min(float(clouse_num), 100.0))
-        if self.gripper_state == 0.0 and clouse_num > 1:
+        if self.gripper_state == 0.0 and clouse_num > 0.1:
             clouse_num = 100.0
             self.gripper_state = 1.0
         elif self.gripper_state == 0.0 and clouse_num < 95:
@@ -385,19 +444,23 @@ if __name__ == "__main__":
     # robotoperation.close_gripper_num(50)
     # rospy.sleep(5)
     # print("夹爪闭合100%")
-    # robotoperation.close_gripper_num(100)
-    # rospy.sleep(5)
-    # print("夹爪打开")
     robotoperation.close_gripper_num(100)
     rospy.sleep(1)
-    robotoperation.close_gripper_num(0)
-    rospy.sleep(1)
+    # print("夹爪打开")
+    # robotoperation.close_gripper_num(100)
+    # rospy.sleep(1)
+    # robotoperation.close_gripper_num(0)
+    # rospy.sleep(1)
     # ！！！！！！！！！！！！！BEST POSE
     #robotoperation.UR10_moveto_pose([[-0.31895895, 0.66285471, 0.51663578, -0.93785405, -0.17891105, -0.02265816, 0.29649151]])
   
     #UMI起始位姿
     # robotoperation.UR10_moveto_pose([[-0.449306, 0.755043, 0.124363, -0.997934, -0.037414, 0.049210, 0.017526]])
-    robotoperation.UR10_moveto_pose([[-0.431347,  0.724575,  0.138996, -0.923718, -0.025503,  0.041791,  0.379931]])
+    # robotoperation.UR10_moveto_pose_rtde([[-0.340571, 0.731783, 0.104320, 0.966354, 0.020020, 0.033588, -0.254228]])
+    # robotoperation.UR10_moveto_pose_rtde([[-0.130960, 0.773085, 0.190628, 0.990286, -0.008432, 0.033067, -0.134793]])
+    # robotoperation.UR10_moveto_angle_rtde([-1.2391, -1.423, 2.127, -2.7782, -1.76819, 0.274889])
+
+
 
     # robotoperation.UR10_moveto_pose([[-0.4329,  0.6481,  0.4966, -0.9341, -0.1634, -0.0201,  0.3169]])
     # robotoperation.UR10_moveto_pose([[-0.4397,  0.7502,  0.1838,  0.9826, -0.0101, -0.0814, -0.1665]])

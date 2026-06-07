@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
-from lerobot.policies.pi05 import (  # noqa: E402
+from lerobot.policies.pi05_ori import (  # noqa: E402
     PI05Config,
     PI05Policy,
     make_pi05_pre_post_processors,  # noqa: E402

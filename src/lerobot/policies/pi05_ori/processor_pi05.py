@@ -44,7 +44,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-
+#将状态写入prompt
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
 @dataclass
 class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
@@ -158,6 +158,7 @@ def make_pi05_pre_post_processors(
     ]
 
     return (
+        
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,

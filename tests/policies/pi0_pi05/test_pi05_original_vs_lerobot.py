@@ -40,8 +40,8 @@ from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing 
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
-from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
-from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors  # noqa: E402
+from lerobot.policies.pi05_ori import PI05Config, PI05Policy  # noqa: E402
+from lerobot.policies.pi05_ori.processor_pi05 import make_pi05_pre_post_processors  # noqa: E402
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 
 # TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG
@@ -271,7 +271,7 @@ def create_original_observation_with_openpi_preprocessing(batch):
     state = deepcopy(state)
 
     # Prepare state (pad to max_state_dim)
-    from lerobot.policies.pi05.modeling_pi05 import pad_vector
+    from lerobot.policies.pi05_ori.modeling_pi05 import pad_vector
 
     state = pad_vector(state, DUMMY_STATE_DIM)
 

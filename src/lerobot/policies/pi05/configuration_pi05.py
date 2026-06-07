@@ -23,6 +23,7 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 DEFAULT_IMAGE_SIZE = 224
+DEFAULT_TACTILE_IMAGE_SIZE = 224
 
 @PreTrainedConfig.register_subclass("pi05")
 @dataclass
@@ -57,16 +58,27 @@ class PI05Config(PreTrainedConfig):
     )  # see openpi `preprocessing_pytorch.py`
 
 
+    ####################################################Modified by weihao
+    tactile_image_size: tuple[int, int] = (
+        DEFAULT_TACTILE_IMAGE_SIZE,
+        DEFAULT_TACTILE_IMAGE_SIZE,
+    )
+
     #######################################################
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
+    ######################3weihao
+    force_window_size: int = 1  # 力觉数据的历史时序窗口长度
+    force_dim: int = 6           # 六维力
+    empty_forces: int = 0        # 处理缺失力觉传感器的情况
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            # Modified by DK, QUANTILES -> MIN_MAX
+            "TACTILE": NormalizationMode.IDENTITY,
+            "FORCE": NormalizationMode.QUANTILES,  #????? 这个地方如何考虑？？？
             "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
@@ -116,6 +128,7 @@ class PI05Config(PreTrainedConfig):
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
 
+    # modified by DK, 新加一个模态需要改这里执行数据类型
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
         for i in range(self.empty_cameras):
@@ -140,6 +153,14 @@ class PI05Config(PreTrainedConfig):
             )
             self.output_features["action"] = action_feature
             
+        ################modified by weihao
+
+        for key, feature_type in self.input_features.items():
+            if "tactile" in key:
+                feature_type.type = FeatureType.TACTILE
+            elif "force" in key:
+                feature_type.type = FeatureType.FORCE
+
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

@@ -314,12 +314,23 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # MOdified by DK
+    # Modified by DK
+    # https://github.com/huggingface/lerobot/issues/2151
+    with torch.no_grad():
+        embed = policy.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
+        lm_head = policy.model.paligemma_with_expert.paligemma.lm_head
+        assert embed.weight.shape == (lm_head.out_features, lm_head.in_features), \
+            f"shape mismatch: embed={embed.weight.shape}, lm_head=({lm_head.out_features},{lm_head.in_features})"
+        with torch.no_grad():
+            embed.weight = lm_head.weight  # make sure they share the same memory
+        same_tensor = (lm_head.weight.data_ptr() == embed.weight.data_ptr())
+        print("tied:", same_tensor)  # if True, they share the same memory
     # 判断参数梯度
+    print("==============具有梯度的参数为===================")
     for name, value in policy.named_parameters():
         if value.requires_grad:
-            print("==============具有梯度的参数为===================")
             print(name)
+    
 
     # Load precomputed SARM progress for RA-BC if enabled
     # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
